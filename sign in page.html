@@ -1,11 +1,146 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Hello World</title>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Password Generator</title>
+<style>
+  :root {
+    --bg: #141922;
+    --panel: #1c232e;
+    --border: #2b3341;
+    --text: #e9e7e1;
+    --muted: #8891a3;
+    --accent: #f0a93b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    padding: 24px;
+  }
+  .card {
+    width: 100%;
+    max-width: 420px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px;
+  }
+  h1 {
+    font-size: 22px;
+    margin: 0 0 6px;
+  }
+  p.sub {
+    color: var(--muted);
+    margin: 0 0 28px;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  .output {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 18px;
+    font-family: ui-monospace, "SF Mono", Consolas, monospace;
+    font-size: 20px;
+    letter-spacing: 1px;
+    word-break: break-all;
+    min-height: 28px;
+    margin-bottom: 20px;
+  }
+  .row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .row label {
+    font-size: 14px;
+    color: var(--muted);
+  }
+  .row input[type="number"] {
+    width: 60px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    color: var(--text);
+    border-radius: 6px;
+    padding: 6px 8px;
+    font-size: 14px;
+  }
+  .buttons {
+    display: flex;
+    gap: 10px;
+  }
+  button {
+    flex: 1;
+    padding: 12px;
+    border-radius: 8px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  #generateBtn {
+    background: var(--accent);
+    color: #201304;
+  }
+  #generateBtn:hover { filter: brightness(1.08); }
+  #copyBtn {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  #copyBtn:hover { border-color: var(--accent); }
+</style>
 </head>
 <body>
-  <p>Hello world</p>
+  <div class="card">
+    <h1>Password generator</h1>
+    <p class="sub">Runs entirely in your browser — same pool-and-random-index logic as the Java version, written in JavaScript.</p>
+
+    <div class="output" id="output">Click generate to start</div>
+
+    <div class="row">
+      <label for="length">Length</label>
+      <input type="number" id="length" value="8" min="4" max="32">
+    </div>
+
+    <div class="buttons">
+      <button id="generateBtn">Generate</button>
+      <button id="copyBtn">Copy</button>
+    </div>
+  </div>
+
+  <script>
+    const pool = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*";
+
+    function generatePassword(length) {
+      let password = "";
+      for (let i = 0; i < length; i++) {
+        const randomIndex = Math.floor(Math.random() * pool.length);
+        password += pool.charAt(randomIndex);
+      }
+      return password;
+    }
+
+    const output = document.getElementById("output");
+    const lengthInput = document.getElementById("length");
+
+    document.getElementById("generateBtn").addEventListener("click", () => {
+      const length = parseInt(lengthInput.value, 10);
+      output.textContent = generatePassword(length);
+    });
+
+    document.getElementById("copyBtn").addEventListener("click", () => {
+      navigator.clipboard.writeText(output.textContent);
+    });
+  </script>
 </body>
 </html>
