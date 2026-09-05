@@ -1,1 +1,1 @@
-# 1st-project
+A basic project that generates random strings pre-defined in the code using HTML, CSS, JavaScript, and with the help of electron made it an app. the idea stemmed randomly into my brain and made it happen in Java and thought of trying to make it in HTML. then the idea of making it into an electron app since it was a new thing I heard of from a friend and wanted to make it into my first executable app because why not? and if not now, then when?
