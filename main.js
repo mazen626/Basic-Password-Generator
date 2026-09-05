@@ -6,7 +6,7 @@ function createWindow() {
     height: 640,
   });
 
-  win.loadFile('index.html');
+  win.loadFile('sign in page.html')
 }
 
 app.whenReady().then(() => {
