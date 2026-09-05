@@ -1,0 +1,12 @@
+directories:
+  output: dist
+  buildResources: build
+appId: com.mazen.passwordgenerator
+productName: PasswordGenerator
+files:
+  - filter:
+      - '**/*'
+win:
+  target:
+    - portable
+electronVersion: 44.2.0
