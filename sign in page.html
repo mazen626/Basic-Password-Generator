@@ -27,7 +27,7 @@
   }
   .card {
     width: 100%;
-    max-width: 420px;
+    max-width: 480px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -74,6 +74,21 @@
     padding: 6px 8px;
     font-size: 14px;
   }
+  .checkboxes {
+    display: grid;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .check {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .check input {
+    accent-color: var(--accent);
+  }
   .buttons {
     display: flex;
     gap: 10px;
@@ -103,13 +118,25 @@
 <body>
   <div class="card">
     <h1>Password generator</h1>
-    <p class="sub">Runs entirely in your browser — same pool-and-random-index logic as the Java version, written in JavaScript.</p>
+    <p class="sub">Create a secure password in seconds with customizable length, numbers, and symbols.</p>
 
     <div class="output" id="output">Click generate to start</div>
 
     <div class="row">
       <label for="length">Length</label>
-      <input type="number" id="length" value="8" min="8" max="256">
+      <input type="number" id="length" value="8" min="1" max="256">
+    </div>
+
+    <div class="checkboxes">
+      <label class="check" for="includeNumbers">
+        <input type="checkbox" id="includeNumbers">
+        Include numbers
+      </label>
+
+      <label class="check" for="includeSymbols">
+        <input type="checkbox" id="includeSymbols">
+        Include symbols
+      </label>
     </div>
 
     <div class="buttons">
@@ -118,29 +145,115 @@
     </div>
   </div>
 
-  <script>
-    const pool = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{};:/?*";
+<script>
+  const Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const Numbers = "0123456789";
+  const Symbols = "!@#$%^&*()_+[]{}|;:,.<>?";
 
-    function generatePassword(length) {
-      let password = "";
-      for (let i = 0; i < length; i++) {
-        const randomIndex = Math.floor(Math.random() * pool.length);
-        password += pool.charAt(randomIndex);
-      }
-      return password;
+  const output = document.getElementById("output");
+  const lengthInput = document.getElementById("length");
+  const includeNumbers = document.getElementById("includeNumbers");
+  const includeSymbols = document.getElementById("includeSymbols");
+
+  function getRequiredCharacterSets() {
+    const sets = [Letters];
+
+    if (includeNumbers.checked) {
+      sets.push(Numbers);
+    }
+    if (includeSymbols.checked) {
+      sets.push(Symbols);
     }
 
-    const output = document.getElementById("output");
-    const lengthInput = document.getElementById("length");
+    return sets;
+  }
 
-    document.getElementById("generateBtn").addEventListener("click", () => {
-      const length = parseInt(lengthInput.value, 10);
-      output.textContent = generatePassword(length);
+  function createRandomChar(pool) {
+    const max = 2 ** 32;
+    const limit = max - (max % pool.length);
+    let randomNumber;
+
+    do {
+      randomNumber = crypto.getRandomValues(new Uint32Array(1))[0];
+    } while (randomNumber >= limit);
+
+    return pool.charAt(randomNumber % pool.length);
+  }
+
+  function generatePassword(length) {
+    const sets = getRequiredCharacterSets();
+    const requiredCount = sets.length;
+    const effectiveLength = Math.max(length, requiredCount);
+    const pool = sets.join("");
+    const chars = [];
+
+    sets.forEach((set) => {
+      chars.push(createRandomChar(set));
     });
 
-    document.getElementById("copyBtn").addEventListener("click", () => {
+    for (let i = requiredCount; i < effectiveLength; i++) {
+      chars.push(createRandomChar(pool));
+    }
+
+    for (let i = chars.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [chars[i], chars[j]] = [chars[j], chars[i]];
+    }
+
+    return chars.join("");
+  }
+
+  function validateLength() {
+    const value = Number.parseInt(lengthInput.value, 10);
+    const minimumLength = getRequiredCharacterSets().length;
+
+    if (!Number.isInteger(value) || value < 1 || value > 256) {
+      lengthInput.setCustomValidity("Length must be between 1 and 256.");
+      return null;
+    }
+
+    if (value < minimumLength) {
+      lengthInput.setCustomValidity(`Length must be at least ${minimumLength} for the selected character sets.`);
+      return null;
+    }
+
+    lengthInput.setCustomValidity("");
+    return value;
+  }
+
+  lengthInput.addEventListener("input", () => {
+    const value = lengthInput.value;
+
+    if (value === "") {
+      lengthInput.setCustomValidity("Length is required.");
+      return;
+    }
+
+    validateLength();
+  });
+
+  [includeNumbers, includeSymbols].forEach((checkbox) => {
+    checkbox.addEventListener("change", () => {
+      validateLength();
+    });
+  });
+
+  document.getElementById("generateBtn").addEventListener("click", () => {
+    const length = validateLength();
+
+    if (length === null) {
+      lengthInput.reportValidity();
+      return;
+    }
+
+    output.textContent = generatePassword(length);
+  });
+
+  document.getElementById("copyBtn").addEventListener("click", () => {
+    if (output.textContent !== "Click generate to start") {
       navigator.clipboard.writeText(output.textContent);
-    });
-  </script>
+    }
+  });
+</script>
 </body>
 </html>
