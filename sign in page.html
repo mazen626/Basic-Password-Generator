@@ -27,7 +27,7 @@
   }
   .card {
     width: 100%;
-    max-width: 420px;
+    max-width: 480px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 12px;
@@ -109,8 +109,15 @@
 
     <div class="row">
       <label for="length">Length</label>
-      <input type="number" id="length" value="8" min="8" max="256">
+      <input type="number" id="length" value="8" min="0" max="256">
     </div>
+
+   <input type="checkbox" id="includeNumbers">
+  <label for="includeNumbers">Include numbers</label>
+
+   <input type="checkbox" id="includeSymbols">
+  <label for="includeSymbols">Include symbols</label>
+
 
     <div class="buttons">
       <button id="generateBtn">Generate</button>
@@ -119,12 +126,21 @@
   </div>
 
   <script>
-    const pool = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-=[]{};:/?*";
+    const Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    const Numbers ="0123456789";
+    const Symbols = "!@#$%^&*()_+[]{}|;:,.<>?";
 
     function generatePassword(length) {
+      let pool = Letters;
+      if (document.getElementById("includeNumbers").checked) {
+        pool += Numbers;
+      }
+      if (document.getElementById("includeSymbols").checked) {
+        pool += Symbols;
+      }
       let password = "";
       for (let i = 0; i < length; i++) {
-        const randomIndex = Math.floor(Math.random() * pool.length);
+        const randomIndex = Math.floor(Crypto.getRandomValues(new Uint32Array(1))[0] / (4294967296 / pool.length));
         password += pool.charAt(randomIndex);
       }
       return password;
