@@ -107,3 +107,28 @@
       navigator.clipboard.writeText(output.textContent);
     }
   });
+document.getElementById('saveButton').addEventListener('click', async () => {
+  const password = output.textContent;
+
+  if (!password.trim() || password === 'Click generate to start') {
+    alert('Generate a password before saving.');
+    return;
+  }
+
+  try {
+    const result = await window.electronAPI.saveOutput(password);
+
+    if (result.canceled) return;
+
+    if (result.error) {
+      alert('Saving failed: ' + result.error);
+      return;
+    }
+
+    if (result.saved) {
+      alert('Password saved successfully to:\n' + result.filePath);
+    }
+  } catch (error) {
+    alert('Could not save the password: ' + error.message);
+  }
+});
