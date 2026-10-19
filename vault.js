@@ -21,7 +21,21 @@ class PasswordVault {
     this.key = null;
   }
 
-  async unlock(masterPassword) {
+  isUnlocked() {
+    return this.key !== null;
+  }
+
+  async hasVault() {
+    try {
+      await fs.access(this.filePath);
+      return true;
+    } catch (error) {
+      if (error.code === 'ENOENT') return false;
+      throw error;
+    }
+  }
+
+  async unlock(masterPassword, confirmation) {
     this.lock();
     validateMasterPassword(masterPassword);
 
@@ -30,7 +44,7 @@ class PasswordVault {
       contents = await fs.readFile(this.filePath, 'utf8');
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
-      return this.initialize(masterPassword);
+      return this.initialize(masterPassword, confirmation);
     }
 
     if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
@@ -57,7 +71,8 @@ class PasswordVault {
     }
   }
 
-  async initialize(masterPassword) {
+  async initialize(masterPassword, confirmation) {
+    validateMasterPasswordConfirmation(masterPassword, confirmation);
     const salt = crypto.randomBytes(SALT_LENGTH);
     const key = await deriveKey(masterPassword, salt, PBKDF2_ITERATIONS);
     const envelope = encryptEntries([], key, salt);
@@ -81,21 +96,69 @@ class PasswordVault {
   async loadEntries() {
     const key = this.requireKey();
     const envelope = await readVaultFile(this.filePath);
-    return decryptEntries(envelope, key);
+    const entries = decryptEntries(envelope, key);
+    let migrated = false;
+
+    entries.forEach((entry) => {
+      if (!entry.id) {
+        entry.id = crypto.randomUUID();
+        migrated = true;
+      }
+    });
+
+    if (migrated) await this.persistEntries(entries, key, envelope);
+    return entries;
   }
 
   async saveEntry(entry) {
     validateEntry(entry);
     const key = this.requireKey();
     const entries = await this.loadEntries();
+    ensureUniqueSite(entries, entry.site);
 
     if (entries.length >= MAX_ENTRIES) {
       throw new Error('Vault entry limit reached.');
     }
 
-    entries.push({ site: entry.site, password: entry.password });
+    entries.push({ id: crypto.randomUUID(), site: entry.site.trim(), password: entry.password });
     const envelope = await readVaultFile(this.filePath);
-    await writeVaultFile(this.filePath, encryptEntries(entries, key, Buffer.from(envelope.salt, 'base64'), envelope.iterations));
+    await this.persistEntries(entries, key, envelope);
+  }
+
+  async updateEntry(id, entry) {
+    validateEntry(entry);
+    validateEntryId(id);
+    const key = this.requireKey();
+    const entries = await this.loadEntries();
+    const index = entries.findIndex((savedEntry) => savedEntry.id === id);
+
+    if (index === -1) throw new Error('Entry not found.');
+    ensureUniqueSite(entries, entry.site, id);
+    entries[index] = { id, site: entry.site.trim(), password: entry.password };
+
+    const envelope = await readVaultFile(this.filePath);
+    await this.persistEntries(entries, key, envelope);
+  }
+
+  async deleteEntry(id) {
+    validateEntryId(id);
+    const key = this.requireKey();
+    const entries = await this.loadEntries();
+    const index = entries.findIndex((entry) => entry.id === id);
+
+    if (index === -1) throw new Error('Entry not found.');
+    entries.splice(index, 1);
+
+    const envelope = await readVaultFile(this.filePath);
+    await this.persistEntries(entries, key, envelope);
+  }
+
+  async persistEntries(entries, key, envelope) {
+    validateEntries(entries);
+    await writeVaultFile(
+      this.filePath,
+      encryptEntries(entries, key, Buffer.from(envelope.salt, 'base64'), envelope.iterations)
+    );
   }
 
   requireKey() {
@@ -201,12 +264,10 @@ function validateEnvelope(envelope) {
     throw new Error('Invalid key derivation settings.');
   }
 
-  const salt = decodeBase64(envelope.salt, SALT_LENGTH, SALT_LENGTH);
-  const iv = decodeBase64(envelope.iv, IV_LENGTH, IV_LENGTH);
-  const tag = decodeBase64(envelope.tag, TAG_LENGTH, TAG_LENGTH);
+  decodeBase64(envelope.salt, SALT_LENGTH, SALT_LENGTH);
+  decodeBase64(envelope.iv, IV_LENGTH, IV_LENGTH);
+  decodeBase64(envelope.tag, TAG_LENGTH, TAG_LENGTH);
   decodeBase64(envelope.ciphertext, 0, MAX_VAULT_BYTES);
-
-  if (!salt || !iv || !tag) throw new Error('Invalid vault encryption data.');
   return envelope;
 }
 
@@ -228,6 +289,12 @@ function validateMasterPassword(masterPassword) {
   }
 }
 
+function validateMasterPasswordConfirmation(masterPassword, confirmation) {
+  if (typeof confirmation !== 'string' || confirmation !== masterPassword) {
+    throw new Error('Master password confirmation does not match.');
+  }
+}
+
 function validateEntry(entry) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).length !== 2 || !Object.hasOwn(entry, 'site') || !Object.hasOwn(entry, 'password')) {
     throw new Error('Entry must contain only site and password.');
@@ -240,11 +307,39 @@ function validateEntry(entry) {
   }
 }
 
+function validateEntryId(id) {
+  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
+    throw new Error('Invalid entry id.');
+  }
+}
+
+function validateStoredEntry(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('Invalid vault entry.');
+  }
+
+  const keys = Object.keys(entry).sort().join(',');
+  if (keys === 'id,password,site') {
+    validateEntryId(entry.id);
+  } else if (keys !== 'password,site') {
+    throw new Error('Invalid vault entry fields.');
+  }
+
+  validateEntry({ site: entry.site, password: entry.password });
+}
+
 function validateEntries(entries) {
   if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) {
     throw new Error('Invalid vault entries.');
   }
-  entries.forEach(validateEntry);
+  entries.forEach(validateStoredEntry);
+}
+
+function ensureUniqueSite(entries, site, ignoredId) {
+  const normalizedSite = site.trim().toLowerCase();
+  if (entries.some((entry) => entry.id !== ignoredId && entry.site.trim().toLowerCase() === normalizedSite)) {
+    throw new Error('An entry for this site already exists.');
+  }
 }
 
 module.exports = PasswordVault;

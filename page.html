@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
 <title>Password Generator</title>
 <style>
   :root {
@@ -77,6 +77,9 @@
   }
   .field { display: grid; gap: 8px; margin-bottom: 20px; }
   .field input { width: 100%; }
+  .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .entry-actions button { flex: 1 1 90px; }
+  #confirmationField[hidden] { display: none; }
   .field label, .vault-label { color: var(--muted); font-size: 14px; }
   .hidden { display: none; }
   #unlockStatus, #vaultStatus { color: var(--muted); font-size: 13px; min-height: 18px; margin: 12px 0; }
@@ -130,14 +133,17 @@
     <p class="sub">Create secure passwords and store them in your encrypted vault.</p>
 
     <section id="unlockPanel">
-      <h2>Unlock vault</h2>
-      <p class="sub">On first use, your master password creates the encrypted vault.</p>
+      <h2 id="unlockHeading">Unlock vault</h2>
       <form id="unlockForm">
         <div class="field">
           <label for="masterPassword">Master password</label>
           <input type="password" id="masterPassword" minlength="8" maxlength="1024" autocomplete="current-password" required>
         </div>
-        <button type="submit">Unlock vault</button>
+        <div id="confirmationField" class="field" hidden>
+          <label for="confirmMasterPassword">Confirm master password</label>
+          <input type="password" id="confirmMasterPassword" minlength="8" maxlength="1024" autocomplete="new-password">
+        </div>
+        <button id="unlockButton" type="submit">Unlock vault</button>
       </form>
       <p id="unlockStatus" role="status"></p>
     </section>
@@ -151,6 +157,7 @@
       <div class="field">
         <label for="site">Site or account</label>
         <input type="text" id="site" maxlength="200" autocomplete="off" required>
+        <small>Each site can have one saved entry.</small>
       </div>
 
       <div class="output" id="output">Click generate to start</div>
@@ -189,6 +196,5 @@
       <ul id="entriesList"></ul>
     </section>
   </div>
-<script src="./renderer.js"></script>
-</body>
+<script src="./renderer.js"></script></body>
 </html>
