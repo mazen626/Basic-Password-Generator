@@ -1,48 +1,50 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain } = require('electron');
 const path = require('node:path');
-const fs = require('node:fs/promises');
+const PasswordVault = require('./vault');
 
-ipcMain.handle('save-output', async (event, content) => {
-  if (typeof content !== 'string') {
-    return {
-      saved: false,
-      canceled: false,
-      error: 'Output must be text.'
-    };
-  }
+let vault;
+let operationQueue = Promise.resolve();
 
-  try {
-    const ownerWindow = BrowserWindow.fromWebContents(event.sender);
-    const options = {
-      title: 'Save Password',
-      defaultPath: 'password.txt',
-      filters: [{ name: 'Text Files', extensions: ['txt'] },
-                { name: 'JSON Files', extensions: ['json'] }]
-    };
+function serializeVaultOperation(operation) {
+  const result = operationQueue.then(operation, operation);
+  operationQueue = result.catch(() => {});
+  return result;
+}
 
-    const { canceled, filePath } = ownerWindow
-      ? await dialog.showSaveDialog(ownerWindow, options)
-      : await dialog.showSaveDialog(options);
-
-    if (canceled || !filePath) {
-      return { saved: false, canceled: true };
+function registerVaultHandler(channel, operation) {
+  ipcMain.handle(channel, async (_event, ...args) => {
+    try {
+      return await serializeVaultOperation(() => operation(...args));
+    } catch (error) {
+      return { success: false, error: error.message };
     }
+  });
+}
 
-    await fs.writeFile(filePath, content, 'utf8');
-    return { saved: true, canceled: false, filePath };
-  } catch (error) {
-    return {
-      saved: false,
-      canceled: false,
-      error: error.message
-    };
-  }
+registerVaultHandler('vault:unlock', async (masterPassword) => {
+  const result = await vault.unlock(masterPassword);
+  return { success: true, created: result.created };
 });
+
+registerVaultHandler('vault:lock', () => {
+  vault.lock();
+  return { success: true };
+});
+
+registerVaultHandler('vault:save-entry', async (entry) => {
+  await vault.saveEntry(entry);
+  return { success: true };
+});
+
+registerVaultHandler('vault:load-entries', async () => ({
+  success: true,
+  entries: await vault.loadEntries()
+}));
 
 function createWindow() {
   const win = new BrowserWindow({
-    width: 480,
-    height: 640,
+    width: 520,
+    height: 760,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -51,15 +53,19 @@ function createWindow() {
   });
 
   win.loadFile(path.join(__dirname, 'page.html'));
+  win.on('closed', () => vault?.lock());
 }
 
 app.whenReady().then(() => {
+  vault = new PasswordVault(path.join(app.getPath('userData'), 'vault.json'));
   createWindow();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
 });
+
+app.on('before-quit', () => vault?.lock());
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

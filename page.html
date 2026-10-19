@@ -66,7 +66,7 @@
     font-size: 14px;
     color: var(--muted);
   }
-  .row input[type="number"] {
+  .row input[type="number"], .field input {
     width: 60px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -75,6 +75,14 @@
     padding: 6px 8px;
     font-size: 14px;
   }
+  .field { display: grid; gap: 8px; margin-bottom: 20px; }
+  .field input { width: 100%; }
+  .field label, .vault-label { color: var(--muted); font-size: 14px; }
+  .hidden { display: none; }
+  #unlockStatus, #vaultStatus { color: var(--muted); font-size: 13px; min-height: 18px; margin: 12px 0; }
+  #entriesList { list-style: none; padding: 0; display: grid; gap: 8px; }
+  #entriesList li { display: grid; gap: 4px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+  #entriesList span { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
   .checkboxes {
     display: grid;
     gap: 10px;
@@ -119,45 +127,67 @@
 <body>
   <div class="card">
     <h1>Password generator</h1>
-    <p class="sub">Create a secure password with customizable length and character sets.</p>
+    <p class="sub">Create secure passwords and store them in your encrypted vault.</p>
 
-    <div class="output" id="output">Click generate to start</div>
+    <section id="unlockPanel">
+      <h2>Unlock vault</h2>
+      <p class="sub">On first use, your master password creates the encrypted vault.</p>
+      <form id="unlockForm">
+        <div class="field">
+          <label for="masterPassword">Master password</label>
+          <input type="password" id="masterPassword" minlength="8" maxlength="1024" autocomplete="current-password" required>
+        </div>
+        <button type="submit">Unlock vault</button>
+      </form>
+      <p id="unlockStatus" role="status"></p>
+    </section>
 
-    <div class="row">
-      <label for="length">Length</label>
-      <input type="number" id="length" value="8" min="1" max="256">
-    </div>
-    
-    <div class="buttons">
-      <button id="saveButton">Save Output</button>
-    </div>
+    <section id="vaultPanel" class="hidden">
+      <div class="buttons">
+        <button id="lockBtn" type="button">Lock vault</button>
+      </div>
+      <p id="vaultStatus" role="status"></p>
 
-    <div class="checkboxes">
-      <label class="check" for="includeLowercase">
-        <input type="checkbox" id="includeLowercase" checked>
-        Include lowercase letters
-      </label>
+      <div class="field">
+        <label for="site">Site or account</label>
+        <input type="text" id="site" maxlength="200" autocomplete="off" required>
+      </div>
 
-      <label class="check" for="includeUppercase">
-        <input type="checkbox" id="includeUppercase" checked>
-        Include uppercase letters
-      </label>
+      <div class="output" id="output">Click generate to start</div>
 
-      <label class="check" for="includeNumbers">
-        <input type="checkbox" id="includeNumbers">
-        Include numbers
-      </label>
+      <div class="row">
+        <label for="length">Length</label>
+        <input type="number" id="length" value="8" min="1" max="256">
+      </div>
 
-      <label class="check" for="includeSymbols">
-        <input type="checkbox" id="includeSymbols">
-        Include symbols
-      </label>
-    </div>
+      <div class="checkboxes">
+        <label class="check" for="includeLowercase">
+          <input type="checkbox" id="includeLowercase" checked>
+          Include lowercase letters
+        </label>
+        <label class="check" for="includeUppercase">
+          <input type="checkbox" id="includeUppercase" checked>
+          Include uppercase letters
+        </label>
+        <label class="check" for="includeNumbers">
+          <input type="checkbox" id="includeNumbers">
+          Include numbers
+        </label>
+        <label class="check" for="includeSymbols">
+          <input type="checkbox" id="includeSymbols">
+          Include symbols
+        </label>
+      </div>
 
-    <div class="buttons">
-      <button id="generateBtn">Generate</button>
-      <button id="copyBtn">Copy</button>
-    </div>
+      <div class="buttons">
+        <button id="generateBtn" type="button">Generate</button>
+        <button id="copyBtn" type="button">Copy</button>
+        <button id="saveButton" type="button">Save entry</button>
+      </div>
+
+      <h2>Saved entries</h2>
+      <ul id="entriesList"></ul>
+    </section>
   </div>
 <script src="./renderer.js"></script>
 </body>
