@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
 <title>Password Generator</title>
 <style>
   :root {
@@ -118,7 +119,7 @@
 <body>
   <div class="card">
     <h1>Password generator</h1>
-    <p class="sub">Create a secure password in seconds with customizable length, numbers, and symbols.</p>
+    <p class="sub">Create a secure password with customizable length and character sets.</p>
 
     <div class="output" id="output">Click generate to start</div>
 
@@ -132,6 +133,16 @@
     </div>
 
     <div class="checkboxes">
+      <label class="check" for="includeLowercase">
+        <input type="checkbox" id="includeLowercase" checked>
+        Include lowercase letters
+      </label>
+
+      <label class="check" for="includeUppercase">
+        <input type="checkbox" id="includeUppercase" checked>
+        Include uppercase letters
+      </label>
+
       <label class="check" for="includeNumbers">
         <input type="checkbox" id="includeNumbers">
         Include numbers

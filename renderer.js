@@ -1,16 +1,24 @@
-
-  const Letters = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+  const LowercaseLetters = "abcdefghijklmnopqrstuvwxyz";
+  const UppercaseLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   const Numbers = "0123456789";
   const Symbols = "!@#$%^&*()_+[]{}|;:,.<>?";
 
   const output = document.getElementById("output");
   const lengthInput = document.getElementById("length");
+  const includeLowercase = document.getElementById("includeLowercase");
+  const includeUppercase = document.getElementById("includeUppercase");
   const includeNumbers = document.getElementById("includeNumbers");
   const includeSymbols = document.getElementById("includeSymbols");
 
   function getRequiredCharacterSets() {
-    const sets = [Letters];
+    const sets = [];
 
+    if (includeLowercase.checked) {
+      sets.push(LowercaseLetters);
+    }
+    if (includeUppercase.checked) {
+      sets.push(UppercaseLetters);
+    }
     if (includeNumbers.checked) {
       sets.push(Numbers);
     }
@@ -21,16 +29,25 @@
     return sets;
   }
 
-  function createRandomChar(pool) {
-    const max = 2 ** 32;
-    const limit = max - (max % pool.length);
+  function randomInt(max) {
+    const range = 2 ** 32;
+
+    if (!Number.isInteger(max) || max < 1 || max > range) {
+      throw new RangeError("max must be an integer between 1 and 2^32.");
+    }
+
+    const limit = range - (range % max);
     let randomNumber;
 
     do {
       randomNumber = crypto.getRandomValues(new Uint32Array(1))[0];
     } while (randomNumber >= limit);
 
-    return pool.charAt(randomNumber % pool.length);
+    return randomNumber % max;
+  }
+
+  function createRandomChar(pool) {
+    return pool.charAt(randomInt(pool.length));
   }
 
   function generatePassword(length) {
@@ -49,7 +66,7 @@
     }
 
     for (let i = chars.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = randomInt(i + 1);
       [chars[i], chars[j]] = [chars[j], chars[i]];
     }
 
@@ -59,6 +76,11 @@
   function validateLength() {
     const value = Number.parseInt(lengthInput.value, 10);
     const minimumLength = getRequiredCharacterSets().length;
+
+    if (minimumLength === 0) {
+      lengthInput.setCustomValidity("Select at least one character set.");
+      return null;
+    }
 
     if (!Number.isInteger(value) || value < 1 || value > 256) {
       lengthInput.setCustomValidity("Length must be between 1 and 256.");
@@ -85,7 +107,7 @@
     validateLength();
   });
 
-  [includeNumbers, includeSymbols].forEach((checkbox) => {
+  [includeLowercase, includeUppercase, includeNumbers, includeSymbols].forEach((checkbox) => {
     checkbox.addEventListener("change", () => {
       validateLength();
     });
@@ -107,6 +129,7 @@
       navigator.clipboard.writeText(output.textContent);
     }
   });
+
 document.getElementById('saveButton').addEventListener('click', async () => {
   const password = output.textContent;
 
