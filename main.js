@@ -201,6 +201,7 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 520,
     height: 760,
+    title: 'VLAUTR',
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,

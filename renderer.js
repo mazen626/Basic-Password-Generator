@@ -153,6 +153,7 @@ function renderEntries() {
 function renderEntry(entry) {
   const savedEntry = entry && typeof entry === "object" ? entry : {};
   const item = document.createElement("li");
+  const header = document.createElement("div");
   const site = document.createElement("strong");
   const details = document.createElement("span");
   const password = document.createElement("span");
@@ -165,7 +166,11 @@ function renderEntry(entry) {
   const entryPassword = typeof savedEntry.password === "string" ? savedEntry.password : "";
   site.textContent = `${savedEntry.favorite === true ? "★ " : ""}${siteName}`;
   details.textContent = `${category} · ${username || "No username"}`;
+  details.className = "entry-detail";
+  header.className = "entry-card-head";
+  header.append(site, details);
   password.textContent = "••••••••••";
+  password.className = "entry-password";
   actions.className = "entry-actions";
   const revealButton = makeButton("Reveal", () => {
     revealed = !revealed;
@@ -180,9 +185,7 @@ function renderEntry(entry) {
   copyButton.disabled = !entryPassword;
   actions.append(revealButton, copyButton);
   if (typeof savedEntry.id === "string") {
-    actions.append(
-      makeButton("Edit", () => renderEntryEditor(savedEntry, item)),
-      makeButton("Delete", async () => {
+    const deleteButton = makeButton("Delete", async () => {
         if (!confirm(`Delete the saved entry for ${siteName}?`)) return;
         const result = await window.electronAPI.deleteEntry(savedEntry.id);
         if (!result.success) {
@@ -191,11 +194,12 @@ function renderEntry(entry) {
         }
         await refreshEntries();
         vaultStatus.textContent = "Entry deleted.";
-      })
-    );
+      });
+    deleteButton.className = "danger-button";
+    actions.append(makeButton("Edit", () => renderEntryEditor(savedEntry, item)), deleteButton);
   }
 
-  item.append(site, details, password, actions);
+  item.append(header, password, actions);
   return item;
 }
 

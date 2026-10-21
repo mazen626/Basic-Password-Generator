@@ -1,49 +1,43 @@
-# Basic Password Generator (BPG)
+# VLAUTR
+
+VLAUTR is the current working name for this Electron password generator and encrypted local password vault.
 
 ![Electron](https://img.shields.io/badge/Built%20with-Electron-47848F?style=flat&logo=electron&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat&logo=windows&logoColor=white)
 
-A lightweight password generator, packaged as a standalone Windows desktop app with Electron — no browser tab, no install wizard, just double-click and go.
-
 ## Features
 
-- Generates secure, random passwords
-- Runs as its own desktop app window rather than in a browser
-- Copies passwords only after confirmation and clears the clipboard after 10 seconds. Clipboard contents can still be captured by other apps or clipboard history, so the clipboard is not secure storage.
+- Generate passwords with configurable length and lowercase, uppercase, number, and symbol sets.
+- Create a master-password protected vault. Vault entries are encrypted locally with AES-256-GCM and a key derived using PBKDF2.
+- Save site, username, password, notes, category, and favorite status for each entry.
+- Search and filter entries by category or favorites, with favorites and sites sorted for quick access.
+- Reveal passwords only on request; copying requires confirmation and clipboard contents are cleared after 10 seconds when possible. Other apps or clipboard history may still capture clipboard contents.
+- Edit and delete entries, with duplicate sites prevented.
+- Lock the vault manually or automatically after five minutes of inactivity.
+- Create encrypted backups and automatically back up older vaults before migration.
 
 ## Requirements
 
-- [Node.js](https://nodejs.org) installed (this also installs `npm` for you)
+- [Node.js](https://nodejs.org) and npm
 
-## Setup
+## Run locally
 
-1. **Download** the ZIP of this repo and **extract** it anywhere you like — just remember where.
+```sh
+npm ci
+npm start
+```
 
-2. **Open a terminal** (Command Prompt) and move into the extracted folder:
-   ```
-   cd "path\to\extracted\folder"
-   ```
+The app opens as a Windows desktop window. The visible window title is currently **VLAUTR** and may change.
 
-3. **Check your setup.** Both of these should print a version number:
-   ```
-   node -v
-   npm -v
-   ```
-   If either fails, install [Node.js](https://nodejs.org) first — `npm` comes bundled with it.
+## Build for Windows
 
-4. **Install the build tool:**
-   ```
-   npm install --save-dev electron-builder
-   ```
+```sh
+npm run dist
+```
 
-5. **Build the app:**
-   ```
-   npm run dist
-   ```
+The portable build is written to the `dist` directory.
 
-6. **Grab your `.exe`.** Once the build finishes, open the new `dist` folder inside your extracted project — the `.exe` is waiting there, ready to run.
-
-## Built With
+## Built with
 
 - [Electron](https://www.electronjs.org/)
-- HTML, CSS, JavaScript
+- HTML, CSS, and JavaScript

@@ -4,139 +4,147 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
-<title>Password Generator</title>
+<title>VLAUTR</title>
 <style>
   :root {
-    --bg: #141922;
-    --panel: #1c232e;
-    --border: #2b3341;
-    --text: #e9e7e1;
-    --muted: #8891a3;
-    --accent: #f0a93b;
+    color-scheme: dark;
+    --canvas: #05050b;
+    --surface: #0b0b16;
+    --raised: #111323;
+    --border: #252743;
+    --text: #f0efff;
+    --muted: #9293ad;
+    --accent: #9b7bff;
+    --accent-deep: #171332;
+    --blue: #536dfe;
+    --focus: #a9b7ff;
+    --danger: #ff8998;
   }
   * { box-sizing: border-box; }
+  html { min-width: 320px; background: var(--canvas); }
   body {
     margin: 0;
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg);
+    background: var(--canvas);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 24px;
+    font: 14px/1.5 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 22px 18px 36px;
   }
-  .card {
-    width: 100%;
-    max-width: 480px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px;
+  button, input, select, textarea { font: inherit; }
+  button { color: inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
   }
-  h1 {
-    font-size: 22px;
-    margin: 0 0 6px;
+  .app-shell { position: relative; z-index: 1; width: 100%; max-width: 520px; margin: 0 auto; }
+  .wall-art { position: fixed; inset: 0; z-index: 0; display: grid; place-items: center; overflow: hidden; background: radial-gradient(ellipse at 50% 50%, #0a0a18aa 0%, #05050baa 58%, #05050bf2 100%); pointer-events: none; }
+  .wall-art pre { margin: 0; color: #8c7de1; font: clamp(16px, 3.2vh, 25px)/1.14 ui-monospace, "Cascadia Code", Consolas, monospace; opacity: .3; text-shadow: 0 0 12px #6955c433; white-space: pre; }
+  .panel { margin-top: 16px; padding: 21px; border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg, #0d0d19e8 0%, #090a13e8 100%); box-shadow: 0 12px 36px #02020a88; }
+  .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
+  h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -.02em; }
+  .section-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+  .field { display: grid; gap: 7px; margin: 0 0 14px; }
+  .field label, .vault-label { color: #c5d0ce; font-size: 12px; font-weight: 600; }
+  .field small, .helper { color: var(--muted); font-size: 11px; }
+  .field input:not([type="checkbox"]), .field select, .field textarea, .entry-filters input, .entry-filters select {
+    width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: #080912; color: var(--text); padding: 10px 12px; transition: border-color .18s, background .18s;
   }
-  p.sub {
-    color: var(--muted);
-    margin: 0 0 28px;
-    font-size: 14px;
-    line-height: 1.5;
-  }
-  .output {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 18px;
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    font-size: 20px;
-    letter-spacing: 1px;
-    word-break: break-all;
-    min-height: 28px;
-    margin-bottom: 20px;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .row label {
-    font-size: 14px;
-    color: var(--muted);
-  }
-  .row input[type="number"] {
-    width: 60px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 14px;
-  }
-  .field { display: grid; gap: 8px; margin-bottom: 20px; }
-  .field input:not([type="checkbox"]), .field select, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
-  .entry-filters input, .entry-filters select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
-  .field textarea { min-height: 76px; resize: vertical; }
-  .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .entry-actions button { flex: 1 1 90px; }
+  .field input:not([type="checkbox"]):hover, .field select:hover, .field textarea:hover, .entry-filters input:hover, .entry-filters select:hover { border-color: #42666a; }
+  .field textarea { min-height: 68px; resize: vertical; }
+  input::placeholder { color: #718784; }
+  select { appearance: auto; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .check { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+  .favorite-row { margin: 0 0 15px; }
+  .output-wrap { margin: 0 0 13px; padding: 14px; border: 1px solid #322d5b; border-radius: 11px; background: #080912; }
+  .output-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .strength { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); letter-spacing: .04em; }
+  .strength::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
+  .output { min-height: 32px; overflow-wrap: anywhere; color: #f6faf7; font: 18px/1.5 ui-monospace, "Cascadia Code", Consolas, monospace; letter-spacing: .025em; }
+  .generator-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+  .length-control { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+  .length-control input { width: 61px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #080912; color: var(--text); }
+  .checkboxes { display: flex; flex-wrap: wrap; gap: 9px 16px; padding: 12px 0 16px; border-top: 1px solid #242440; }
+  .buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+  button { min-height: 38px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--raised); color: var(--text); font-size: 12px; font-weight: 650; cursor: pointer; transition: background .16s, border-color .16s, transform .16s; }
+  button:hover:not(:disabled) { border-color: #55787a; background: #214348; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  #generateBtn, #saveButton, #unlockButton { border-color: var(--accent); background: var(--accent); color: #0c081a; }
+  #generateBtn:hover:not(:disabled), #saveButton:hover:not(:disabled), #unlockButton:hover:not(:disabled) { border-color: #c4b5fd; background: #b29aff; }
+  #copyBtn, #lockBtn { background: transparent; }
+  #unlockButton { width: 100%; margin-top: 2px; }
   #confirmationField[hidden] { display: none; }
-  .field label, .vault-label { color: var(--muted); font-size: 14px; }
-  .hidden { display: none; }
-  #unlockStatus, #vaultStatus { color: var(--muted); font-size: 13px; min-height: 18px; margin: 12px 0; }
-  #entriesList { list-style: none; padding: 0; display: grid; gap: 8px; }
-  #entriesList li { display: grid; gap: 4px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
-  #entriesList span { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
-  .entry-filters { display: grid; gap: 8px; margin-bottom: 16px; }
-  .checkboxes {
-    display: grid;
-    gap: 10px;
-    margin-bottom: 24px;
+  .hidden { display: none !important; }
+  #unlockStatus, #vaultStatus { min-height: 18px; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+  #recoveryActions { margin-top: 14px; padding: 13px; border: 1px solid #52615a; border-radius: 10px; background: #202c29; }
+  #recoveryNotice { margin: 0 0 10px; color: #d8d7c4; font-size: 12px; }
+  #recoveryActions .buttons button { flex: 1 1 150px; }
+  .entry-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 23px 0 12px; }
+  .entry-list-heading h2 { font-size: 16px; }
+  .entry-list-heading small { color: var(--muted); font-size: 10px; }
+  .entry-filters { display: grid; grid-template-columns: 1fr 155px; gap: 9px; margin-bottom: 12px; }
+  .entry-filters .check { grid-column: 1 / -1; }
+  #entriesList { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+  #entriesList > li { min-width: 0; padding: 13px; border: 1px solid #292744; border-radius: 11px; background: #090a14; overflow-wrap: anywhere; }
+  .entry-card-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; }
+  #entriesList strong { color: var(--text); font-size: 13px; }
+  #entriesList .entry-detail { display: block; margin-top: 3px; color: var(--muted); font: 11px/1.4 Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  #entriesList .entry-password { display: block; margin: 10px 0; color: #d9d3ff; font: 12px/1.5 ui-monospace, Consolas, monospace; letter-spacing: .04em; }
+  .entry-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .entry-actions button { flex: 1 1 72px; min-height: 32px; padding: 6px 9px; font-size: 11px; }
+  #entriesList form { display: grid; gap: 9px; }
+  #entriesList form .field { margin: 0; }
+  #entriesList form .field input:not([type="checkbox"]), #entriesList form .field select, #entriesList form .field textarea { padding: 8px 10px; font-size: 12px; }
+  #entriesList form .entry-actions { margin-top: 4px; }
+  #entriesList form .check { margin: 2px 0; }
+  .danger-button { border-color: #633343; color: #ff9ead; }
+  .security-note { margin: 12px 0 0; color: #8fa5a2; font-size: 10px; line-height: 1.45; }
+  @media (max-width: 520px) {
+    body { padding: 12px 10px 25px; }
+    .panel { padding: 16px; }
+    .field-grid { grid-template-columns: 1fr; gap: 0; }
   }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--muted);
-    font-size: 14px;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
   }
-  .check input {
-    accent-color: var(--accent);
-  }
-  .buttons {
-    display: flex;
-    gap: 10px;
-  }
-  button {
-    flex: 1;
-    padding: 12px;
-    border-radius: 8px;
-    border: none;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  #generateBtn {
-    background: var(--accent);
-    color: #201304;
-  }
-  #generateBtn:hover { filter: brightness(1.08); }
-  #copyBtn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-  #copyBtn:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Password generator</h1>
-    <p class="sub">Create secure passwords and store them in your encrypted vault.</p>
+  <div class="wall-art" aria-hidden="true"><pre>░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+ ░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░
+ ░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░
+  ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░
+  ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░
+   ░▒▓██▓▒░  ░▒▓████████▓▒░
 
-    <section id="unlockPanel">
-      <h2 id="unlockHeading">Unlock vault</h2>
+
+ ░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░
+
+
+░▒▓████████▓▒░▒▓███████▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓███████▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░</pre></div>
+  <main class="app-shell">
+    <section id="unlockPanel" class="panel">
+      <div class="section-heading">
+        <div>
+          <h2 id="unlockHeading">Unlock vault</h2>
+          <p class="section-note">Your master password never leaves this device.</p>
+        </div>
+      </div>
       <form id="unlockForm">
         <div class="field">
           <label for="masterPassword">Master password</label>
@@ -155,97 +163,108 @@
           <button id="openVaultFolderBtn" type="button">Open vault folder</button>
         </div>
       </div>
-      <p id="unlockStatus" role="status"></p>
+      <p id="unlockStatus" role="status" aria-live="polite"></p>
     </section>
 
-    <section id="vaultPanel" class="hidden">
-      <div class="buttons">
+    <section id="vaultPanel" class="panel hidden">
+      <div class="section-heading">
+        <div>
+          <h2>Your vault</h2>
+          <p class="section-note">A private home for the details you rely on.</p>
+        </div>
         <button id="lockBtn" type="button">Lock vault</button>
       </div>
-      <p id="vaultStatus" role="status"></p>
+      <p id="vaultStatus" role="status" aria-live="polite"></p>
 
-      <div class="field">
-        <label for="site">Site or account</label>
-        <input type="text" id="site" maxlength="200" autocomplete="off" required>
-        <small>Each site can have one saved entry.</small>
-      </div>
-      <div class="field">
-        <label for="username">Username</label>
-        <input type="text" id="username" maxlength="255" autocomplete="off">
-      </div>
-      <div class="field">
-        <label for="category">Category</label>
-        <select id="category">
-          <option value="login">Login</option>
-          <option value="email">Email</option>
-          <option value="finance">Finance</option>
-          <option value="identity">Identity</option>
-          <option value="work">Work</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="notes">Notes</label>
-        <textarea id="notes" maxlength="4000"></textarea>
-      </div>
-      <label class="check" for="favorite">
-        <input type="checkbox" id="favorite">
-        Favorite
-      </label>
+      <section aria-labelledby="generatorHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="generatorHeading">Password generator</h2>
+            <p class="section-note">Build a strong, one-of-a-kind password.</p>
+          </div>
+        </div>
+        <div class="output-wrap">
+          <div class="output-top"><span>New password</span><span class="strength">Ready to create</span></div>
+          <div class="output" id="output" aria-live="polite">Click generate to start</div>
+        </div>
+        <div class="generator-controls">
+          <label class="length-control" for="length">Length <input type="number" id="length" value="16" min="1" max="256"></label>
+          <span class="helper">Up to 256 characters</span>
+        </div>
+        <div class="checkboxes">
+          <label class="check" for="includeLowercase"><input type="checkbox" id="includeLowercase" checked> Lowercase</label>
+          <label class="check" for="includeUppercase"><input type="checkbox" id="includeUppercase" checked> Uppercase</label>
+          <label class="check" for="includeNumbers"><input type="checkbox" id="includeNumbers" checked> Numbers</label>
+          <label class="check" for="includeSymbols"><input type="checkbox" id="includeSymbols"> Symbols</label>
+        </div>
+        <div class="buttons">
+          <button id="generateBtn" type="button">Generate password</button>
+          <button id="copyBtn" type="button">Copy</button>
+        </div>
+      </section>
 
-      <div class="output" id="output">Click generate to start</div>
+      <section aria-labelledby="saveHeading" style="margin-top:26px;padding-top:21px;border-top:1px solid #203b3f">
+        <div class="section-heading">
+          <div>
+            <h2 id="saveHeading">Save an entry</h2>
+            <p class="section-note">Add an account to your encrypted vault.</p>
+          </div>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="site">Site or account</label>
+            <input type="text" id="site" maxlength="200" autocomplete="off" required placeholder="example.com">
+            <small>Each site can have one saved entry.</small>
+          </div>
+          <div class="field">
+            <label for="username">Username</label>
+            <input type="text" id="username" maxlength="255" autocomplete="off" placeholder="name@example.com">
+          </div>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="category">Category</label>
+            <select id="category">
+              <option value="login">Login</option>
+              <option value="email">Email</option>
+              <option value="finance">Finance</option>
+              <option value="identity">Identity</option>
+              <option value="work">Work</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="notes">Notes</label>
+            <textarea id="notes" maxlength="4000" placeholder="Optional details"></textarea>
+          </div>
+        </div>
+        <label class="check favorite-row" for="favorite"><input type="checkbox" id="favorite"> Add to favorites</label>
+        <button id="saveButton" type="button">Save to vault</button>
+      </section>
 
-      <div class="row">
-        <label for="length">Length</label>
-        <input type="number" id="length" value="8" min="1" max="256">
-      </div>
-
-      <div class="checkboxes">
-        <label class="check" for="includeLowercase">
-          <input type="checkbox" id="includeLowercase" checked>
-          Include lowercase letters
-        </label>
-        <label class="check" for="includeUppercase">
-          <input type="checkbox" id="includeUppercase" checked>
-          Include uppercase letters
-        </label>
-        <label class="check" for="includeNumbers">
-          <input type="checkbox" id="includeNumbers">
-          Include numbers
-        </label>
-        <label class="check" for="includeSymbols">
-          <input type="checkbox" id="includeSymbols">
-          Include symbols
-        </label>
-      </div>
-
-      <div class="buttons">
-        <button id="generateBtn" type="button">Generate</button>
-        <button id="copyBtn" type="button">Copy</button>
-        <button id="saveButton" type="button">Save entry</button>
-      </div>
-
-      <h2>Saved entries</h2>
-      <small>Copying requires confirmation. Copied passwords clear from the clipboard after 10 seconds, but other apps or clipboard history may capture them. The clipboard is not secure storage.</small>
-      <div class="entry-filters">
-        <input type="search" id="entrySearch" placeholder="Search site, username, or notes" aria-label="Search saved entries">
-        <select id="categoryFilter" aria-label="Filter by category">
-          <option value="all">All categories</option>
-          <option value="login">Login</option>
-          <option value="email">Email</option>
-          <option value="finance">Finance</option>
-          <option value="identity">Identity</option>
-          <option value="work">Work</option>
-          <option value="other">Other</option>
-        </select>
-        <label class="check" for="favoriteFilter">
-          <input type="checkbox" id="favoriteFilter">
-          Favorites only
-        </label>
-      </div>
-      <ul id="entriesList"></ul>
+      <section aria-labelledby="entriesHeading" style="margin-top:25px;padding-top:21px;border-top:1px solid #203b3f">
+        <div class="entry-list-heading">
+          <h2 id="entriesHeading">Saved entries</h2>
+          <small>Passwords stay hidden until revealed</small>
+        </div>
+        <div class="entry-filters">
+          <input type="search" id="entrySearch" placeholder="Search your vault" aria-label="Search saved entries">
+          <select id="categoryFilter" aria-label="Filter by category">
+            <option value="all">All categories</option>
+            <option value="login">Login</option>
+            <option value="email">Email</option>
+            <option value="finance">Finance</option>
+            <option value="identity">Identity</option>
+            <option value="work">Work</option>
+            <option value="other">Other</option>
+          </select>
+          <label class="check" for="favoriteFilter"><input type="checkbox" id="favoriteFilter"> Favorites only</label>
+        </div>
+        <ul id="entriesList"></ul>
+        <p class="security-note">Copying requires confirmation. Copied passwords clear from the clipboard after 10 seconds, but other apps or clipboard history may capture them. The clipboard is not secure storage.</p>
+      </section>
     </section>
-  </div>
+  </main>
 <script src="./renderer.js"></script>
 </body>
 </html>
