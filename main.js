@@ -1,4 +1,4 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor, shell } = require('electron');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
@@ -8,10 +8,13 @@ const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 const CLIPBOARD_CLEAR_MS = 10 * 1000;
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+if (!hasSingleInstanceLock) app.quit();
 
 let vault;
 let operationQueue = Promise.resolve();
 let idleLockTimer;
+let lastActivityAt = 0;
 let clipboardClearTimer;
 let copiedPasswordDigest;
 let pendingCopyToken;
@@ -49,14 +52,25 @@ function armIdleLock() {
   clearIdleLock();
   if (!vault?.isUnlocked()) return;
 
-  idleLockTimer = setTimeout(() => {
-    vault.lock();
-    clearCopyConfirmation();
-    idleLockTimer = null;
-    BrowserWindow.getAllWindows().forEach((win) => {
-      if (!win.isDestroyed()) win.webContents.send('vault:auto-locked');
-    });
-  }, IDLE_LOCK_MS);
+  lastActivityAt = Date.now();
+  idleLockTimer = setTimeout(lockIfIdle, IDLE_LOCK_MS);
+}
+
+function lockIfIdle() {
+  if (!vault?.isUnlocked()) return;
+  const remainingTime = IDLE_LOCK_MS - (Date.now() - lastActivityAt);
+  if (remainingTime > 0) {
+    clearIdleLock();
+    idleLockTimer = setTimeout(lockIfIdle, remainingTime);
+    return;
+  }
+
+  clearIdleLock();
+  clearCopyConfirmation();
+  vault.lock();
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (!win.isDestroyed()) win.webContents.send('vault:auto-locked');
+  });
 }
 
 function clearCopiedPassword() {
@@ -120,10 +134,18 @@ function copyPassword(password, token) {
   return { success: true };
 }
 
-registerVaultHandler('vault:status', async () => ({
+registerVaultHandler('vault:status', async () => ({ success: true, ...await vault.getStatus() }));
+
+registerVaultHandler('vault:backup', async () => ({
   success: true,
-  exists: await vault.hasVault()
+  backupName: await vault.createBackup()
 }));
+
+registerVaultHandler('vault:open-folder', async () => {
+  const error = await shell.openPath(path.dirname(vault.filePath));
+  if (error) throw new Error(error);
+  return { success: true };
+});
 
 registerVaultHandler('vault:unlock', async (masterPassword, confirmation) => {
   const result = await vault.unlock(masterPassword, confirmation);
@@ -200,8 +222,19 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!hasSingleInstanceLock) return;
+  powerMonitor.on('resume', lockIfIdle);
+  powerMonitor.on('unlock-screen', lockIfIdle);
   vault = new PasswordVault(path.join(app.getPath('userData'), 'vault.json'));
   createWindow();
+
+  app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (!win) return;
+    if (win.isMinimized()) win.restore();
+    win.show();
+    win.focus();
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();

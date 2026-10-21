@@ -40,6 +40,41 @@ class PasswordVault {
     }
   }
 
+  async getStatus() {
+    let contents;
+    try {
+      contents = await fs.readFile(this.filePath, 'utf8');
+    } catch (error) {
+      if (error.code === 'ENOENT') return { exists: false, legacy: false, corrupted: false };
+      throw error;
+    }
+
+    if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
+      return { exists: true, legacy: false, corrupted: true };
+    }
+
+    try {
+      const envelope = validateEnvelope(JSON.parse(contents));
+      return { exists: true, legacy: envelope.version === LEGACY_FORMAT_VERSION, corrupted: false };
+    } catch {
+      return { exists: true, legacy: false, corrupted: true };
+    }
+  }
+
+  async createBackup() {
+    let contents;
+    try {
+      contents = await fs.readFile(this.filePath);
+    } catch (error) {
+      if (error.code === 'ENOENT') throw new Error('There is no vault file to back up.');
+      throw error;
+    }
+
+    const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
+    await fs.writeFile(path.join(path.dirname(this.filePath), backupName), contents, { flag: 'wx', mode: 0o600 });
+    return backupName;
+  }
+
   async unlock(masterPassword, confirmation) {
     this.lock();
     validateMasterPassword(masterPassword);
@@ -370,9 +405,9 @@ function validateMasterPasswordConfirmation(masterPassword, confirmation) {
 }
 
 function validateEntry(entry) {
-  const expectedKeys = ['category', 'favorite', 'notes', 'password', 'site', 'username'];
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).sort().join(',') !== expectedKeys.join(',')) {
-    throw new Error('Entry must contain site, username, password, notes, category, and favorite.');
+  const requiredFields = ['site', 'username', 'password', 'notes', 'category', 'favorite'];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || requiredFields.some((field) => !Object.hasOwn(entry, field))) {
+    throw new Error('Entry must include site, username, password, notes, category, and favorite.');
   }
   if (typeof entry.site !== 'string' || entry.site.trim().length === 0 || entry.site.length > MAX_SITE_LENGTH) {
     throw new Error('Site must contain 1 to 200 characters.');

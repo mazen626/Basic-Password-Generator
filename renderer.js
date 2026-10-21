@@ -12,6 +12,8 @@ const confirmationInput = document.getElementById("confirmMasterPassword");
 const confirmationField = document.getElementById("confirmationField");
 const unlockHeading = document.getElementById("unlockHeading");
 const unlockButton = document.getElementById("unlockButton");
+const recoveryActions = document.getElementById("recoveryActions");
+const recoveryNotice = document.getElementById("recoveryNotice");
 const unlockPanel = document.getElementById("unlockPanel");
 const vaultPanel = document.getElementById("vaultPanel");
 const unlockStatus = document.getElementById("unlockStatus");
@@ -96,6 +98,13 @@ function makeButton(label, handler) {
   button.textContent = label;
   button.addEventListener("click", handler);
   return button;
+}
+
+function showDuplicateSiteError(input, message) {
+  if (typeof message !== "string" || !message.toLowerCase().includes("already exists")) return false;
+  input.setCustomValidity(message);
+  input.reportValidity();
+  return true;
 }
 
 async function copyPasswordWithConfirmation(password) {
@@ -215,6 +224,7 @@ function renderEntryEditor(entry, item) {
   site.type = "text";
   site.maxLength = 200;
   site.value = entry.site;
+  site.addEventListener("input", () => site.setCustomValidity(""));
   usernameLabel.textContent = "Username";
   username.type = "text";
   username.maxLength = 255;
@@ -260,6 +270,7 @@ function renderEntryEditor(entry, item) {
         favorite: favorite.checked
       });
       if (!result.success) {
+        showDuplicateSiteError(site, result.error);
         vaultStatus.textContent = result.error;
         return;
       }
@@ -282,6 +293,14 @@ async function initializeUnlockForm() {
 
   confirmationField.hidden = result.exists;
   confirmationInput.required = !result.exists;
+  recoveryActions.classList.toggle("hidden", !result.exists);
+  recoveryNotice.textContent = result.corrupted
+    ? "The vault file appears damaged or unsupported. It has not been changed. Create an encrypted backup before trying recovery."
+    : result.legacy
+      ? "This older vault will be upgraded after unlock. An encrypted backup is created automatically before migration; you can also create one now."
+      : result.exists
+        ? "You can create an encrypted backup or open the vault folder before unlocking."
+        : "";
   unlockHeading.textContent = result.exists ? "Unlock vault" : "Create vault";
   unlockButton.textContent = result.exists ? "Unlock vault" : "Create vault";
   masterPasswordInput.autocomplete = result.exists ? "current-password" : "new-password";
@@ -320,7 +339,10 @@ document.getElementById("unlockForm").addEventListener("submit", async (event) =
   confirmationInput.value = "";
 
   if (!result.success) {
-    unlockStatus.textContent = result.error;
+    const error = typeof result.error === "string" ? result.error : "Could not unlock the vault.";
+    unlockStatus.textContent = error.includes("Incorrect master password or vault data is corrupted.")
+      ? "The password may be incorrect, or the vault may be damaged. The file was not changed; create an encrypted backup before recovery."
+      : error;
     return;
   }
 
@@ -339,6 +361,18 @@ document.getElementById("unlockForm").addEventListener("submit", async (event) =
 document.getElementById("lockBtn").addEventListener("click", async () => {
   const result = await window.electronAPI.lockVault();
   if (result.success) clearUnlockedView("Vault locked.");
+});
+
+document.getElementById("backupVaultBtn").addEventListener("click", async () => {
+  const result = await window.electronAPI.backupVault();
+  recoveryNotice.textContent = result.success
+    ? `Encrypted backup created: ${result.backupName}`
+    : result.error;
+});
+
+document.getElementById("openVaultFolderBtn").addEventListener("click", async () => {
+  const result = await window.electronAPI.openVaultFolder();
+  if (!result.success) recoveryNotice.textContent = result.error;
 });
 
 window.electronAPI.onAutoLock(() => clearUnlockedView("Vault auto-locked after five minutes of inactivity."));
@@ -398,6 +432,7 @@ document.getElementById("saveButton").addEventListener("click", async () => {
 
   const result = await window.electronAPI.saveEntry({ site, username, password, notes, category, favorite });
   if (!result.success) {
+    showDuplicateSiteError(siteInput, result.error);
     vaultStatus.textContent = result.error;
     return;
   }

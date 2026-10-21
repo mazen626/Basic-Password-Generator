@@ -2,6 +2,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
   getVaultStatus: () => ipcRenderer.invoke('vault:status'),
+  backupVault: () => ipcRenderer.invoke('vault:backup'),
+  openVaultFolder: () => ipcRenderer.invoke('vault:open-folder'),
   unlockVault: (masterPassword, confirmation) => ipcRenderer.invoke('vault:unlock', masterPassword, confirmation),
   lockVault: () => ipcRenderer.invoke('vault:lock'),
   recordActivity: () => ipcRenderer.invoke('vault:activity'),
