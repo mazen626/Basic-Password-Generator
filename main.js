@@ -89,7 +89,7 @@ registerVaultHandler('vault:status', async () => ({
 registerVaultHandler('vault:unlock', async (masterPassword, confirmation) => {
   const result = await vault.unlock(masterPassword, confirmation);
   armIdleLock();
-  return { success: true, created: result.created };
+  return { success: true, created: result.created, migrated: result.migrated };
 });
 
 registerVaultHandler('vault:lock', () => {

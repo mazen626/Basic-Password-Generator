@@ -4,7 +4,8 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 
 const pbkdf2 = promisify(crypto.pbkdf2);
-const FORMAT_VERSION = 1;
+const FORMAT_VERSION = 2;
+const LEGACY_FORMAT_VERSION = 1;
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 16;
 const IV_LENGTH = 12;
@@ -12,8 +13,11 @@ const TAG_LENGTH = 16;
 const MAX_VAULT_BYTES = 8 * 1024 * 1024;
 const MAX_ENTRIES = 10000;
 const MAX_SITE_LENGTH = 200;
+const MAX_USERNAME_LENGTH = 255;
 const MAX_PASSWORD_LENGTH = 4096;
+const MAX_NOTES_LENGTH = 4000;
 const MAX_MASTER_PASSWORD_LENGTH = 1024;
+const CATEGORIES = new Set(['login', 'email', 'finance', 'identity', 'work', 'other']);
 
 class PasswordVault {
   constructor(filePath) {
@@ -60,15 +64,27 @@ class PasswordVault {
 
     const salt = Buffer.from(envelope.salt, 'base64');
     const candidateKey = await deriveKey(masterPassword, salt, envelope.iterations);
+    let entries;
 
     try {
-      decryptEntries(envelope, candidateKey);
-      this.replaceKey(candidateKey);
-      return { created: false };
+      entries = decryptEntries(envelope, candidateKey);
     } catch {
       candidateKey.fill(0);
       throw new Error('Incorrect master password or vault data is corrupted.');
     }
+
+    const migrated = envelope.version === LEGACY_FORMAT_VERSION;
+    if (migrated) {
+      try {
+        await this.persistEntries(migrateEntries(entries), candidateKey, envelope);
+      } catch (error) {
+        candidateKey.fill(0);
+        throw new Error(`Could not upgrade the vault: ${error.message}`);
+      }
+    }
+
+    this.replaceKey(candidateKey);
+    return { created: false, migrated };
   }
 
   async initialize(masterPassword, confirmation) {
@@ -85,7 +101,7 @@ class PasswordVault {
     }
 
     this.replaceKey(key);
-    return { created: true };
+    return { created: true, migrated: false };
   }
 
   lock() {
@@ -96,18 +112,8 @@ class PasswordVault {
   async loadEntries() {
     const key = this.requireKey();
     const envelope = await readVaultFile(this.filePath);
-    const entries = decryptEntries(envelope, key);
-    let migrated = false;
-
-    entries.forEach((entry) => {
-      if (!entry.id) {
-        entry.id = crypto.randomUUID();
-        migrated = true;
-      }
-    });
-
-    if (migrated) await this.persistEntries(entries, key, envelope);
-    return entries;
+    if (envelope.version !== FORMAT_VERSION) throw new Error('Vault must be upgraded by unlocking again.');
+    return decryptEntries(envelope, key);
   }
 
   async saveEntry(entry) {
@@ -116,11 +122,21 @@ class PasswordVault {
     const entries = await this.loadEntries();
     ensureUniqueSite(entries, entry.site);
 
-    if (entries.length >= MAX_ENTRIES) {
-      throw new Error('Vault entry limit reached.');
-    }
+    if (entries.length >= MAX_ENTRIES) throw new Error('Vault entry limit reached.');
 
-    entries.push({ id: crypto.randomUUID(), site: entry.site.trim(), password: entry.password });
+    const now = new Date().toISOString();
+    entries.push({
+      id: crypto.randomUUID(),
+      site: entry.site.trim(),
+      username: entry.username,
+      password: entry.password,
+      notes: entry.notes,
+      category: entry.category,
+      favorite: entry.favorite,
+      createdAt: now,
+      updatedAt: now
+    });
+
     const envelope = await readVaultFile(this.filePath);
     await this.persistEntries(entries, key, envelope);
   }
@@ -134,7 +150,19 @@ class PasswordVault {
 
     if (index === -1) throw new Error('Entry not found.');
     ensureUniqueSite(entries, entry.site, id);
-    entries[index] = { id, site: entry.site.trim(), password: entry.password };
+
+    const current = entries[index];
+    entries[index] = {
+      id,
+      site: entry.site.trim(),
+      username: entry.username,
+      password: entry.password,
+      notes: entry.notes,
+      category: entry.category,
+      favorite: entry.favorite,
+      createdAt: current.createdAt,
+      updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
+    };
 
     const envelope = await readVaultFile(this.filePath);
     await this.persistEntries(entries, key, envelope);
@@ -216,11 +244,27 @@ function decryptEntries(envelope, key) {
 
   try {
     const entries = JSON.parse(plaintext.toString('utf8'));
-    validateEntries(entries);
+    if (validated.version === LEGACY_FORMAT_VERSION) validateLegacyEntries(entries);
+    else validateEntries(entries);
     return entries;
   } finally {
     plaintext.fill(0);
   }
+}
+
+function migrateEntries(entries) {
+  const now = new Date().toISOString();
+  return entries.map((entry) => ({
+    id: isValidEntryId(entry.id) ? entry.id : crypto.randomUUID(),
+    site: entry.site.trim(),
+    username: '',
+    password: entry.password,
+    notes: '',
+    category: 'login',
+    favorite: false,
+    createdAt: now,
+    updatedAt: now
+  }));
 }
 
 async function readVaultFile(filePath) {
@@ -257,7 +301,7 @@ function validateEnvelope(envelope) {
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
     throw new Error('Invalid vault envelope.');
   }
-  if (envelope.version !== FORMAT_VERSION || envelope.kdf !== 'pbkdf2-sha256' || envelope.cipher !== 'aes-256-gcm') {
+  if (![LEGACY_FORMAT_VERSION, FORMAT_VERSION].includes(envelope.version) || envelope.kdf !== 'pbkdf2-sha256' || envelope.cipher !== 'aes-256-gcm') {
     throw new Error('Unsupported vault format.');
   }
   if (!Number.isInteger(envelope.iterations) || envelope.iterations < 100000 || envelope.iterations > 2000000) {
@@ -296,43 +340,94 @@ function validateMasterPasswordConfirmation(masterPassword, confirmation) {
 }
 
 function validateEntry(entry) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).length !== 2 || !Object.hasOwn(entry, 'site') || !Object.hasOwn(entry, 'password')) {
-    throw new Error('Entry must contain only site and password.');
+  const expectedKeys = ['category', 'favorite', 'notes', 'password', 'site', 'username'];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).sort().join(',') !== expectedKeys.join(',')) {
+    throw new Error('Entry must contain site, username, password, notes, category, and favorite.');
   }
   if (typeof entry.site !== 'string' || entry.site.trim().length === 0 || entry.site.length > MAX_SITE_LENGTH) {
     throw new Error('Site must contain 1 to 200 characters.');
   }
+  if (typeof entry.username !== 'string' || entry.username.length > MAX_USERNAME_LENGTH) {
+    throw new Error('Username must be 255 characters or fewer.');
+  }
   if (typeof entry.password !== 'string' || entry.password.length === 0 || entry.password.length > MAX_PASSWORD_LENGTH) {
     throw new Error('Password must contain 1 to 4096 characters.');
+  }
+  if (typeof entry.notes !== 'string' || entry.notes.length > MAX_NOTES_LENGTH) {
+    throw new Error('Notes must be 4000 characters or fewer.');
+  }
+  if (typeof entry.category !== 'string' || !CATEGORIES.has(entry.category)) {
+    throw new Error('Choose a valid category.');
+  }
+  if (typeof entry.favorite !== 'boolean') {
+    throw new Error('Favorite must be true or false.');
   }
 }
 
 function validateEntryId(id) {
-  if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id)) {
-    throw new Error('Invalid entry id.');
-  }
+  if (!isValidEntryId(id)) throw new Error('Invalid entry id.');
+}
+
+function isValidEntryId(id) {
+  return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 }
 
 function validateStoredEntry(entry) {
-  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
-    throw new Error('Invalid vault entry.');
-  }
-
-  const keys = Object.keys(entry).sort().join(',');
-  if (keys === 'id,password,site') {
-    validateEntryId(entry.id);
-  } else if (keys !== 'password,site') {
+  const expectedKeys = ['category', 'createdAt', 'favorite', 'id', 'notes', 'password', 'site', 'updatedAt', 'username'];
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).sort().join(',') !== expectedKeys.join(',')) {
     throw new Error('Invalid vault entry fields.');
   }
+  validateEntry({
+    site: entry.site,
+    username: entry.username,
+    password: entry.password,
+    notes: entry.notes,
+    category: entry.category,
+    favorite: entry.favorite
+  });
+  validateEntryId(entry.id);
+  validateTimestamp(entry.createdAt);
+  validateTimestamp(entry.updatedAt);
+}
 
-  validateEntry({ site: entry.site, password: entry.password });
+function validateLegacyEntries(entries) {
+  if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) {
+    throw new Error('Invalid legacy vault entries.');
+  }
+
+  entries.forEach((entry) => {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+      throw new Error('Invalid legacy vault entry.');
+    }
+    const keys = Object.keys(entry).sort().join(',');
+    if (keys !== 'password,site' && keys !== 'id,password,site') {
+      throw new Error('Invalid legacy vault entry fields.');
+    }
+    if (typeof entry.site !== 'string' || entry.site.trim().length === 0 || entry.site.length > MAX_SITE_LENGTH) {
+      throw new Error('Invalid legacy site.');
+    }
+    if (typeof entry.password !== 'string' || entry.password.length === 0 || entry.password.length > MAX_PASSWORD_LENGTH) {
+      throw new Error('Invalid legacy password.');
+    }
+  });
+}
+
+function validateTimestamp(value) {
+  if (typeof value !== 'string' || !Number.isFinite(Date.parse(value)) || new Date(value).toISOString() !== value) {
+    throw new Error('Invalid entry timestamp.');
+  }
 }
 
 function validateEntries(entries) {
   if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) {
     throw new Error('Invalid vault entries.');
   }
-  entries.forEach(validateStoredEntry);
+  const ids = new Set();
+  entries.forEach((entry) => {
+    validateStoredEntry(entry);
+    if (ids.has(entry.id)) throw new Error('Duplicate entry id.');
+    ids.add(entry.id);
+  });
 }
 
 function ensureUniqueSite(entries, site, ignoredId) {

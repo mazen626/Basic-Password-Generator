@@ -66,7 +66,7 @@
     font-size: 14px;
     color: var(--muted);
   }
-  .row input[type="number"], .field input {
+  .row input[type="number"] {
     width: 60px;
     background: var(--bg);
     border: 1px solid var(--border);
@@ -76,7 +76,8 @@
     font-size: 14px;
   }
   .field { display: grid; gap: 8px; margin-bottom: 20px; }
-  .field input { width: 100%; }
+  .field input:not([type="checkbox"]), .field select, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
+  .field textarea { min-height: 76px; resize: vertical; }
   .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
   .entry-actions button { flex: 1 1 90px; }
   #confirmationField[hidden] { display: none; }
@@ -159,6 +160,29 @@
         <input type="text" id="site" maxlength="200" autocomplete="off" required>
         <small>Each site can have one saved entry.</small>
       </div>
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" maxlength="255" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="category">Category</label>
+        <select id="category">
+          <option value="login">Login</option>
+          <option value="email">Email</option>
+          <option value="finance">Finance</option>
+          <option value="identity">Identity</option>
+          <option value="work">Work</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="notes">Notes</label>
+        <textarea id="notes" maxlength="4000"></textarea>
+      </div>
+      <label class="check" for="favorite">
+        <input type="checkbox" id="favorite">
+        Favorite
+      </label>
 
       <div class="output" id="output">Click generate to start</div>
 
@@ -196,5 +220,6 @@
       <ul id="entriesList"></ul>
     </section>
   </div>
-<script src="./renderer.js"></script></body>
+<script src="./renderer.js"></script>
+</body>
 </html>

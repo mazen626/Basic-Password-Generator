@@ -103,11 +103,13 @@ async function refreshEntries() {
 function renderEntry(entry) {
   const item = document.createElement("li");
   const site = document.createElement("strong");
+  const details = document.createElement("span");
   const password = document.createElement("span");
   const actions = document.createElement("div");
   let revealed = false;
 
-  site.textContent = entry.site;
+  site.textContent = `${entry.favorite ? "★ " : ""}${entry.site}`;
+  details.textContent = `${entry.category} · ${entry.username || "No username"}`;
   password.textContent = "••••••••••";
   actions.className = "entry-actions";
   actions.append(
@@ -133,7 +135,7 @@ function renderEntry(entry) {
     })
   );
 
-  item.append(site, password, actions);
+  item.append(site, details, password, actions);
   return item;
 }
 
@@ -142,6 +144,17 @@ function renderEntryEditor(entry, item) {
   const siteField = document.createElement("div");
   const siteLabel = document.createElement("label");
   const site = document.createElement("input");
+  const usernameField = document.createElement("div");
+  const usernameLabel = document.createElement("label");
+  const username = document.createElement("input");
+  const notesField = document.createElement("div");
+  const notesLabel = document.createElement("label");
+  const notes = document.createElement("textarea");
+  const categoryField = document.createElement("div");
+  const categoryLabel = document.createElement("label");
+  const category = document.createElement("select");
+  const favoriteField = document.createElement("label");
+  const favorite = document.createElement("input");
   const passwordField = document.createElement("div");
   const passwordLabel = document.createElement("label");
   const password = document.createElement("input");
@@ -151,6 +164,25 @@ function renderEntryEditor(entry, item) {
   site.type = "text";
   site.maxLength = 200;
   site.value = entry.site;
+  usernameLabel.textContent = "Username";
+  username.type = "text";
+  username.maxLength = 255;
+  username.value = entry.username;
+  notesLabel.textContent = "Notes";
+  notes.maxLength = 4000;
+  notes.value = entry.notes;
+  categoryLabel.textContent = "Category";
+  ["login", "email", "finance", "identity", "work", "other"].forEach((value) => {
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent = value[0].toUpperCase() + value.slice(1);
+    category.append(option);
+  });
+  category.value = entry.category;
+  favorite.type = "checkbox";
+  favorite.checked = entry.favorite;
+  favoriteField.className = "check";
+  favoriteField.append(favorite, document.createTextNode("Favorite"));
   passwordLabel.textContent = "Password";
   password.type = "password";
   password.maxLength = 4096;
@@ -159,12 +191,22 @@ function renderEntryEditor(entry, item) {
   passwordField.className = "field";
   actions.className = "entry-actions";
   siteField.append(siteLabel, site);
+  usernameField.className = "field";
+  usernameField.append(usernameLabel, username);
+  notesField.className = "field";
+  notesField.append(notesLabel, notes);
+  categoryField.className = "field";
+  categoryField.append(categoryLabel, category);
   passwordField.append(passwordLabel, password);
   actions.append(
     makeButton("Save changes", async () => {
       const result = await window.electronAPI.updateEntry(entry.id, {
         site: site.value.trim(),
-        password: password.value
+        username: username.value,
+        password: password.value,
+        notes: notes.value,
+        category: category.value,
+        favorite: favorite.checked
       });
       if (!result.success) {
         vaultStatus.textContent = result.error;
@@ -176,7 +218,7 @@ function renderEntryEditor(entry, item) {
     makeButton("Cancel", () => item.replaceWith(renderEntry(entry)))
   );
   form.addEventListener("submit", (event) => event.preventDefault());
-  form.append(siteField, passwordField, actions);
+  form.append(siteField, usernameField, passwordField, notesField, categoryField, favoriteField, actions);
   item.replaceChildren(form);
 }
 
@@ -229,7 +271,7 @@ document.getElementById("unlockForm").addEventListener("submit", async (event) =
 
   unlockPanel.classList.add("hidden");
   vaultPanel.classList.remove("hidden");
-  vaultStatus.textContent = result.created ? "Vault created and unlocked." : "Vault unlocked.";
+  vaultStatus.textContent = result.migrated ? "Vault upgraded and unlocked." : result.created ? "Vault created and unlocked." : "Vault unlocked.";
   lastActivityReport = 0;
 
   try {
@@ -282,6 +324,10 @@ document.getElementById("copyBtn").addEventListener("click", async () => {
 document.getElementById("saveButton").addEventListener("click", async () => {
   const password = output.textContent;
   const site = siteInput.value.trim();
+  const username = document.getElementById("username").value;
+  const notes = document.getElementById("notes").value;
+  const category = document.getElementById("category").value;
+  const favorite = document.getElementById("favorite").checked;
 
   if (!site || site.length > 200) {
     siteInput.setCustomValidity("Enter a site name up to 200 characters.");
@@ -295,13 +341,16 @@ document.getElementById("saveButton").addEventListener("click", async () => {
     return;
   }
 
-  const result = await window.electronAPI.saveEntry({ site, password });
+  const result = await window.electronAPI.saveEntry({ site, username, password, notes, category, favorite });
   if (!result.success) {
     vaultStatus.textContent = result.error;
     return;
   }
 
   siteInput.value = "";
+  document.getElementById("username").value = "";
+  document.getElementById("notes").value = "";
+  document.getElementById("favorite").checked = false;
   vaultStatus.textContent = "Entry saved to the encrypted vault.";
   await refreshEntries();
 });
