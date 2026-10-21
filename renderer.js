@@ -107,7 +107,7 @@ async function copyPasswordWithConfirmation(password) {
 async function refreshEntries() {
   const result = await window.electronAPI.loadEntries();
   if (!result.success) throw new Error(result.error);
-  savedEntries = result.entries;
+  savedEntries = Array.isArray(result.entries) ? result.entries : [];
   renderEntries();
 }
 
@@ -116,13 +116,22 @@ function renderEntries() {
   const searchTerm = searchInput.value.trim().toLocaleLowerCase();
   const selectedCategory = categoryFilter.value;
   const filteredEntries = savedEntries.filter((entry) => {
-    const matchesSearch = [entry.site, entry.username, entry.notes, entry.category]
-      .some((value) => value.toLocaleLowerCase().includes(searchTerm));
-    const matchesCategory = selectedCategory === "all" || entry.category === selectedCategory;
-    const matchesFavorite = !favoriteFilter.checked || entry.favorite;
+    if (!entry || typeof entry !== "object") return false;
+    const searchableFields = [entry.site, entry.username, entry.notes, entry.category]
+      .filter((value) => typeof value === "string")
+      .map((value) => value.toLocaleLowerCase());
+    const matchesSearch = searchableFields.some((value) => value.includes(searchTerm));
+    const category = typeof entry.category === "string" ? entry.category : "";
+    const matchesCategory = selectedCategory === "all" || category === selectedCategory;
+    const matchesFavorite = !favoriteFilter.checked || entry.favorite === true;
     return matchesSearch && matchesCategory && matchesFavorite;
   });
-  filteredEntries.sort((first, second) => Number(second.favorite) - Number(first.favorite) || first.site.localeCompare(second.site));
+  filteredEntries.sort((first, second) => {
+    const favoriteOrder = Number(second.favorite === true) - Number(first.favorite === true);
+    const firstSite = typeof first.site === "string" ? first.site : "";
+    const secondSite = typeof second.site === "string" ? second.site : "";
+    return favoriteOrder || firstSite.localeCompare(secondSite);
+  });
   if (filteredEntries.length === 0) {
     const emptyState = document.createElement("li");
     emptyState.textContent = savedEntries.length ? "No entries match these filters." : "No saved entries yet.";
@@ -133,6 +142,7 @@ function renderEntries() {
 }
 
 function renderEntry(entry) {
+  const savedEntry = entry && typeof entry === "object" ? entry : {};
   const item = document.createElement("li");
   const site = document.createElement("strong");
   const details = document.createElement("span");
@@ -140,32 +150,41 @@ function renderEntry(entry) {
   const actions = document.createElement("div");
   let revealed = false;
 
-  site.textContent = `${entry.favorite ? "★ " : ""}${entry.site}`;
-  details.textContent = `${entry.category} · ${entry.username || "No username"}`;
+  const siteName = typeof savedEntry.site === "string" ? savedEntry.site : "Unknown site";
+  const username = typeof savedEntry.username === "string" ? savedEntry.username : "";
+  const category = typeof savedEntry.category === "string" ? savedEntry.category : "Uncategorized";
+  const entryPassword = typeof savedEntry.password === "string" ? savedEntry.password : "";
+  site.textContent = `${savedEntry.favorite === true ? "★ " : ""}${siteName}`;
+  details.textContent = `${category} · ${username || "No username"}`;
   password.textContent = "••••••••••";
   actions.className = "entry-actions";
-  actions.append(
-    makeButton("Reveal", () => {
-      revealed = !revealed;
-      password.textContent = revealed ? entry.password : "••••••••••";
-      actions.querySelector("button").textContent = revealed ? "Hide" : "Reveal";
-    }),
-    makeButton("Copy", async () => {
-      const result = await copyPasswordWithConfirmation(entry.password);
-      vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
-    }),
-    makeButton("Edit", () => renderEntryEditor(entry, item)),
-    makeButton("Delete", async () => {
-      if (!confirm(`Delete the saved entry for ${entry.site}?`)) return;
-      const result = await window.electronAPI.deleteEntry(entry.id);
-      if (!result.success) {
-        vaultStatus.textContent = result.error;
-        return;
-      }
-      await refreshEntries();
-      vaultStatus.textContent = "Entry deleted.";
-    })
-  );
+  const revealButton = makeButton("Reveal", () => {
+    revealed = !revealed;
+    password.textContent = revealed ? entryPassword : "••••••••••";
+    revealButton.textContent = revealed ? "Hide" : "Reveal";
+  });
+  const copyButton = makeButton("Copy", async () => {
+    const result = await copyPasswordWithConfirmation(entryPassword);
+    vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
+  });
+  revealButton.disabled = !entryPassword;
+  copyButton.disabled = !entryPassword;
+  actions.append(revealButton, copyButton);
+  if (typeof savedEntry.id === "string") {
+    actions.append(
+      makeButton("Edit", () => renderEntryEditor(savedEntry, item)),
+      makeButton("Delete", async () => {
+        if (!confirm(`Delete the saved entry for ${siteName}?`)) return;
+        const result = await window.electronAPI.deleteEntry(savedEntry.id);
+        if (!result.success) {
+          vaultStatus.textContent = result.error;
+          return;
+        }
+        await refreshEntries();
+        vaultStatus.textContent = "Entry deleted.";
+      })
+    );
+  }
 
   item.append(site, details, password, actions);
   return item;

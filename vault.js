@@ -23,6 +23,7 @@ class PasswordVault {
   constructor(filePath) {
     this.filePath = filePath;
     this.key = null;
+    this.writeQueue = Promise.resolve();
   }
 
   isUnlocked() {
@@ -114,74 +115,88 @@ class PasswordVault {
 
   async loadEntries() {
     const key = this.requireKey();
-    const envelope = await readVaultFile(this.filePath);
-    if (envelope.version !== FORMAT_VERSION) throw new Error('Vault must be upgraded by unlocking again.');
-    return decryptEntries(envelope, key);
+    const { entries } = await this.readEntriesForWrite(key);
+    return entries;
   }
 
   async saveEntry(entry) {
     validateEntry(entry);
-    const key = this.requireKey();
-    const entries = await this.loadEntries();
-    ensureUniqueSite(entries, entry.site);
+    return this.runWriteTransaction(async () => {
+      const key = this.requireKey();
+      const { envelope, entries } = await this.readEntriesForWrite(key);
+      ensureUniqueSite(entries, entry.site);
 
-    if (entries.length >= MAX_ENTRIES) throw new Error('Vault entry limit reached.');
+      if (entries.length >= MAX_ENTRIES) throw new Error('Vault entry limit reached.');
 
-    const now = new Date().toISOString();
-    entries.push({
-      id: crypto.randomUUID(),
-      site: entry.site.trim(),
-      username: entry.username,
-      password: entry.password,
-      notes: entry.notes,
-      category: entry.category,
-      favorite: entry.favorite,
-      createdAt: now,
-      updatedAt: now
+      const now = new Date().toISOString();
+      entries.push({
+        id: crypto.randomUUID(),
+        site: entry.site.trim(),
+        username: entry.username,
+        password: entry.password,
+        notes: entry.notes,
+        category: entry.category,
+        favorite: entry.favorite,
+        createdAt: now,
+        updatedAt: now
+      });
+
+      await this.persistEntries(entries, key, envelope);
     });
-
-    const envelope = await readVaultFile(this.filePath);
-    await this.persistEntries(entries, key, envelope);
   }
 
   async updateEntry(id, entry) {
     validateEntry(entry);
     validateEntryId(id);
-    const key = this.requireKey();
-    const entries = await this.loadEntries();
-    const index = entries.findIndex((savedEntry) => savedEntry.id === id);
+    return this.runWriteTransaction(async () => {
+      const key = this.requireKey();
+      const { envelope, entries } = await this.readEntriesForWrite(key);
+      const index = entries.findIndex((savedEntry) => savedEntry.id === id);
 
-    if (index === -1) throw new Error('Entry not found.');
-    ensureUniqueSite(entries, entry.site, id);
+      if (index === -1) throw new Error('Entry not found.');
+      ensureUniqueSite(entries, entry.site, id);
 
-    const current = entries[index];
-    entries[index] = {
-      id,
-      site: entry.site.trim(),
-      username: entry.username,
-      password: entry.password,
-      notes: entry.notes,
-      category: entry.category,
-      favorite: entry.favorite,
-      createdAt: current.createdAt,
-      updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
-    };
+      const current = entries[index];
+      entries[index] = {
+        id,
+        site: entry.site.trim(),
+        username: entry.username,
+        password: entry.password,
+        notes: entry.notes,
+        category: entry.category,
+        favorite: entry.favorite,
+        createdAt: current.createdAt,
+        updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
+      };
 
-    const envelope = await readVaultFile(this.filePath);
-    await this.persistEntries(entries, key, envelope);
+      await this.persistEntries(entries, key, envelope);
+    });
   }
 
   async deleteEntry(id) {
     validateEntryId(id);
-    const key = this.requireKey();
-    const entries = await this.loadEntries();
-    const index = entries.findIndex((entry) => entry.id === id);
+    return this.runWriteTransaction(async () => {
+      const key = this.requireKey();
+      const { envelope, entries } = await this.readEntriesForWrite(key);
+      const index = entries.findIndex((entry) => entry.id === id);
 
-    if (index === -1) throw new Error('Entry not found.');
-    entries.splice(index, 1);
+      if (index === -1) throw new Error('Entry not found.');
+      entries.splice(index, 1);
 
+      await this.persistEntries(entries, key, envelope);
+    });
+  }
+
+  async readEntriesForWrite(key) {
     const envelope = await readVaultFile(this.filePath);
-    await this.persistEntries(entries, key, envelope);
+    if (envelope.version !== FORMAT_VERSION) throw new Error('Vault must be upgraded by unlocking again.');
+    return { envelope, entries: decryptEntries(envelope, key) };
+  }
+
+  runWriteTransaction(operation) {
+    const result = this.writeQueue.then(operation, operation);
+    this.writeQueue = result.catch(() => {});
+    return result;
   }
 
   async persistEntries(entries, key, envelope) {
