@@ -17,11 +17,16 @@ const vaultPanel = document.getElementById("vaultPanel");
 const unlockStatus = document.getElementById("unlockStatus");
 const vaultStatus = document.getElementById("vaultStatus");
 const entriesList = document.getElementById("entriesList");
+const searchInput = document.getElementById("entrySearch");
+const categoryFilter = document.getElementById("categoryFilter");
+const favoriteFilter = document.getElementById("favoriteFilter");
 const includeLowercase = document.getElementById("includeLowercase");
 const includeUppercase = document.getElementById("includeUppercase");
 const includeNumbers = document.getElementById("includeNumbers");
 const includeSymbols = document.getElementById("includeSymbols");
 let lastActivityReport = 0;
+let savedEntries = [];
+let searchTimer;
 
 function getRequiredCharacterSets() {
   const sets = [];
@@ -96,8 +101,29 @@ function makeButton(label, handler) {
 async function refreshEntries() {
   const result = await window.electronAPI.loadEntries();
   if (!result.success) throw new Error(result.error);
+  savedEntries = result.entries;
+  renderEntries();
+}
+
+function renderEntries() {
   entriesList.replaceChildren();
-  result.entries.forEach((entry) => entriesList.append(renderEntry(entry)));
+  const searchTerm = searchInput.value.trim().toLocaleLowerCase();
+  const selectedCategory = categoryFilter.value;
+  const filteredEntries = savedEntries.filter((entry) => {
+    const matchesSearch = [entry.site, entry.username, entry.notes, entry.category]
+      .some((value) => value.toLocaleLowerCase().includes(searchTerm));
+    const matchesCategory = selectedCategory === "all" || entry.category === selectedCategory;
+    const matchesFavorite = !favoriteFilter.checked || entry.favorite;
+    return matchesSearch && matchesCategory && matchesFavorite;
+  });
+  filteredEntries.sort((first, second) => Number(second.favorite) - Number(first.favorite) || first.site.localeCompare(second.site));
+  if (filteredEntries.length === 0) {
+    const emptyState = document.createElement("li");
+    emptyState.textContent = savedEntries.length ? "No entries match these filters." : "No saved entries yet.";
+    entriesList.append(emptyState);
+    return;
+  }
+  filteredEntries.forEach((entry) => entriesList.append(renderEntry(entry)));
 }
 
 function renderEntry(entry) {
@@ -238,6 +264,10 @@ async function initializeUnlockForm() {
 
 function clearUnlockedView(message) {
   entriesList.replaceChildren();
+  savedEntries = [];
+  searchInput.value = "";
+  categoryFilter.value = "all";
+  favoriteFilter.checked = false;
   output.textContent = "Click generate to start";
   siteInput.value = "";
   unlockPanel.classList.remove("hidden");
@@ -356,4 +386,10 @@ document.getElementById("saveButton").addEventListener("click", async () => {
 });
 
 siteInput.addEventListener("input", () => siteInput.setCustomValidity(""));
+searchInput.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(renderEntries, 200);
+});
+categoryFilter.addEventListener("change", renderEntries);
+favoriteFilter.addEventListener("change", renderEntries);
 initializeUnlockForm();
