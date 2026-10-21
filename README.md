@@ -9,6 +9,7 @@ A lightweight password generator, packaged as a standalone Windows desktop app w
 
 - Generates secure, random passwords
 - Runs as its own desktop app window rather than in a browser
+- Copies passwords only after confirmation and clears the clipboard after 10 seconds. Clipboard contents can still be captured by other apps or clipboard history, so the clipboard is not secure storage.
 
 ## Requirements
 

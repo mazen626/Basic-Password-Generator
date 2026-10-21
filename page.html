@@ -3,6 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
 <title>Password Generator</title>
 <style>
   :root {
@@ -74,6 +75,20 @@
     padding: 6px 8px;
     font-size: 14px;
   }
+  .field { display: grid; gap: 8px; margin-bottom: 20px; }
+  .field input:not([type="checkbox"]), .field select, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
+  .entry-filters input, .entry-filters select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
+  .field textarea { min-height: 76px; resize: vertical; }
+  .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+  .entry-actions button { flex: 1 1 90px; }
+  #confirmationField[hidden] { display: none; }
+  .field label, .vault-label { color: var(--muted); font-size: 14px; }
+  .hidden { display: none; }
+  #unlockStatus, #vaultStatus { color: var(--muted); font-size: 13px; min-height: 18px; margin: 12px 0; }
+  #entriesList { list-style: none; padding: 0; display: grid; gap: 8px; }
+  #entriesList li { display: grid; gap: 4px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
+  #entriesList span { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
+  .entry-filters { display: grid; gap: 8px; margin-bottom: 16px; }
   .checkboxes {
     display: grid;
     gap: 10px;
@@ -118,35 +133,118 @@
 <body>
   <div class="card">
     <h1>Password generator</h1>
-    <p class="sub">Create a secure password in seconds with customizable length, numbers, and symbols.</p>
+    <p class="sub">Create secure passwords and store them in your encrypted vault.</p>
 
-    <div class="output" id="output">Click generate to start</div>
+    <section id="unlockPanel">
+      <h2 id="unlockHeading">Unlock vault</h2>
+      <form id="unlockForm">
+        <div class="field">
+          <label for="masterPassword">Master password</label>
+          <input type="password" id="masterPassword" minlength="8" maxlength="1024" autocomplete="current-password" required>
+        </div>
+        <div id="confirmationField" class="field" hidden>
+          <label for="confirmMasterPassword">Confirm master password</label>
+          <input type="password" id="confirmMasterPassword" minlength="8" maxlength="1024" autocomplete="new-password">
+        </div>
+        <button id="unlockButton" type="submit">Unlock vault</button>
+      </form>
+      <div id="recoveryActions" class="hidden">
+        <p id="recoveryNotice" role="status"></p>
+        <div class="buttons">
+          <button id="backupVaultBtn" type="button">Create encrypted backup</button>
+          <button id="openVaultFolderBtn" type="button">Open vault folder</button>
+        </div>
+      </div>
+      <p id="unlockStatus" role="status"></p>
+    </section>
 
-    <div class="row">
-      <label for="length">Length</label>
-      <input type="number" id="length" value="8" min="1" max="256">
-    </div>
-    
-    <div class="buttons">
-      <button id="saveButton">Save Output</button>
-    </div>
+    <section id="vaultPanel" class="hidden">
+      <div class="buttons">
+        <button id="lockBtn" type="button">Lock vault</button>
+      </div>
+      <p id="vaultStatus" role="status"></p>
 
-    <div class="checkboxes">
-      <label class="check" for="includeNumbers">
-        <input type="checkbox" id="includeNumbers">
-        Include numbers
+      <div class="field">
+        <label for="site">Site or account</label>
+        <input type="text" id="site" maxlength="200" autocomplete="off" required>
+        <small>Each site can have one saved entry.</small>
+      </div>
+      <div class="field">
+        <label for="username">Username</label>
+        <input type="text" id="username" maxlength="255" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="category">Category</label>
+        <select id="category">
+          <option value="login">Login</option>
+          <option value="email">Email</option>
+          <option value="finance">Finance</option>
+          <option value="identity">Identity</option>
+          <option value="work">Work</option>
+          <option value="other">Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="notes">Notes</label>
+        <textarea id="notes" maxlength="4000"></textarea>
+      </div>
+      <label class="check" for="favorite">
+        <input type="checkbox" id="favorite">
+        Favorite
       </label>
 
-      <label class="check" for="includeSymbols">
-        <input type="checkbox" id="includeSymbols">
-        Include symbols
-      </label>
-    </div>
+      <div class="output" id="output">Click generate to start</div>
 
-    <div class="buttons">
-      <button id="generateBtn">Generate</button>
-      <button id="copyBtn">Copy</button>
-    </div>
+      <div class="row">
+        <label for="length">Length</label>
+        <input type="number" id="length" value="8" min="1" max="256">
+      </div>
+
+      <div class="checkboxes">
+        <label class="check" for="includeLowercase">
+          <input type="checkbox" id="includeLowercase" checked>
+          Include lowercase letters
+        </label>
+        <label class="check" for="includeUppercase">
+          <input type="checkbox" id="includeUppercase" checked>
+          Include uppercase letters
+        </label>
+        <label class="check" for="includeNumbers">
+          <input type="checkbox" id="includeNumbers">
+          Include numbers
+        </label>
+        <label class="check" for="includeSymbols">
+          <input type="checkbox" id="includeSymbols">
+          Include symbols
+        </label>
+      </div>
+
+      <div class="buttons">
+        <button id="generateBtn" type="button">Generate</button>
+        <button id="copyBtn" type="button">Copy</button>
+        <button id="saveButton" type="button">Save entry</button>
+      </div>
+
+      <h2>Saved entries</h2>
+      <small>Copying requires confirmation. Copied passwords clear from the clipboard after 10 seconds, but other apps or clipboard history may capture them. The clipboard is not secure storage.</small>
+      <div class="entry-filters">
+        <input type="search" id="entrySearch" placeholder="Search site, username, or notes" aria-label="Search saved entries">
+        <select id="categoryFilter" aria-label="Filter by category">
+          <option value="all">All categories</option>
+          <option value="login">Login</option>
+          <option value="email">Email</option>
+          <option value="finance">Finance</option>
+          <option value="identity">Identity</option>
+          <option value="work">Work</option>
+          <option value="other">Other</option>
+        </select>
+        <label class="check" for="favoriteFilter">
+          <input type="checkbox" id="favoriteFilter">
+          Favorites only
+        </label>
+      </div>
+      <ul id="entriesList"></ul>
+    </section>
   </div>
 <script src="./renderer.js"></script>
 </body>
