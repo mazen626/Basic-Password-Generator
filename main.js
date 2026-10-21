@@ -1,4 +1,5 @@
-const { app, BrowserWindow, clipboard, ipcMain } = require('electron');
+const { app, BrowserWindow, clipboard, dialog, ipcMain } = require('electron');
+const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const PasswordVault = require('./vault');
@@ -6,13 +7,15 @@ const PasswordVault = require('./vault');
 const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
 const IDLE_LOCK_MS = 5 * 60 * 1000;
-const CLIPBOARD_CLEAR_MS = 20 * 1000;
+const CLIPBOARD_CLEAR_MS = 10 * 1000;
 
 let vault;
 let operationQueue = Promise.resolve();
 let idleLockTimer;
 let clipboardClearTimer;
-let copiedPassword;
+let copiedPasswordDigest;
+let pendingCopyToken;
+let copyTokenTimer;
 
 function serializeVaultOperation(operation) {
   const result = operationQueue.then(operation, operation);
@@ -48,6 +51,7 @@ function armIdleLock() {
 
   idleLockTimer = setTimeout(() => {
     vault.lock();
+    clearCopyConfirmation();
     idleLockTimer = null;
     BrowserWindow.getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send('vault:auto-locked');
@@ -59,24 +63,59 @@ function clearCopiedPassword() {
   if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
   clipboardClearTimer = null;
 
-  if (copiedPassword !== undefined) {
+  if (copiedPasswordDigest) {
     try {
-      if (clipboard.readText() === copiedPassword) clipboard.clear();
+      const clipboardDigest = crypto.createHash('sha256').update(clipboard.readText()).digest();
+      if (crypto.timingSafeEqual(clipboardDigest, copiedPasswordDigest)) clipboard.clear();
+      clipboardDigest.fill(0);
     } catch {}
   }
 
-  copiedPassword = undefined;
+  copiedPasswordDigest?.fill(0);
+  copiedPasswordDigest = undefined;
 }
 
-function copyPassword(password) {
+function clearCopyConfirmation() {
+  if (copyTokenTimer) clearTimeout(copyTokenTimer);
+  copyTokenTimer = null;
+  pendingCopyToken = undefined;
+}
+
+async function confirmPasswordCopy() {
   if (!vault?.isUnlocked()) throw new Error('Unlock the vault first.');
+  clearCopyConfirmation();
+  const confirmation = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
+    type: 'warning',
+    buttons: ['Copy for 10 seconds', 'Cancel'],
+    defaultId: 1,
+    cancelId: 1,
+    title: 'Copy password',
+    message: 'Copy this password to the system clipboard?',
+    detail: 'Other apps or clipboard history may capture it. The clipboard is temporary, not secure storage.'
+  });
+  if (confirmation.response !== 0) return { success: false, cancelled: true };
+
+  pendingCopyToken = crypto.randomUUID();
+  copyTokenTimer = setTimeout(() => {
+    pendingCopyToken = undefined;
+    copyTokenTimer = null;
+  }, 30000);
+  return { success: true, token: pendingCopyToken };
+}
+
+function copyPassword(password, token) {
+  if (!vault?.isUnlocked()) throw new Error('Unlock the vault first.');
+  if (!pendingCopyToken || token !== pendingCopyToken) throw new Error('Confirm the copy action first.');
+  pendingCopyToken = undefined;
+  if (copyTokenTimer) clearTimeout(copyTokenTimer);
+  copyTokenTimer = null;
   if (typeof password !== 'string' || password.length === 0 || password.length > 4096) {
     throw new Error('Password must contain 1 to 4096 characters.');
   }
 
   clearCopiedPassword();
   clipboard.writeText(password);
-  copiedPassword = password;
+  copiedPasswordDigest = crypto.createHash('sha256').update(password).digest();
   clipboardClearTimer = setTimeout(clearCopiedPassword, CLIPBOARD_CLEAR_MS);
   return { success: true };
 }
@@ -94,6 +133,7 @@ registerVaultHandler('vault:unlock', async (masterPassword, confirmation) => {
 
 registerVaultHandler('vault:lock', () => {
   clearIdleLock();
+  clearCopyConfirmation();
   vault.lock();
   return { success: true };
 });
@@ -103,8 +143,10 @@ registerVaultHandler('vault:activity', () => {
   return { success: true };
 });
 
-registerVaultHandler('vault:copy-password', (password) => {
-  const result = copyPassword(password);
+registerVaultHandler('vault:confirm-copy', confirmPasswordCopy);
+
+registerVaultHandler('vault:copy-password', (password, token) => {
+  const result = copyPassword(password, token);
   armIdleLock();
   return result;
 });
@@ -152,6 +194,7 @@ function createWindow() {
   win.loadFile(PAGE_PATH);
   win.on('closed', () => {
     clearIdleLock();
+    clearCopyConfirmation();
     vault?.lock();
   });
 }
@@ -167,6 +210,7 @@ app.whenReady().then(() => {
 
 app.on('before-quit', () => {
   clearIdleLock();
+  clearCopyConfirmation();
   vault?.lock();
   clearCopiedPassword();
 });

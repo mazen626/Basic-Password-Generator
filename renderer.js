@@ -98,6 +98,12 @@ function makeButton(label, handler) {
   return button;
 }
 
+async function copyPasswordWithConfirmation(password) {
+  const confirmation = await window.electronAPI.confirmPasswordCopy();
+  if (!confirmation.success) return confirmation;
+  return window.electronAPI.copyPassword(password, confirmation.token);
+}
+
 async function refreshEntries() {
   const result = await window.electronAPI.loadEntries();
   if (!result.success) throw new Error(result.error);
@@ -145,8 +151,8 @@ function renderEntry(entry) {
       actions.querySelector("button").textContent = revealed ? "Hide" : "Reveal";
     }),
     makeButton("Copy", async () => {
-      const result = await window.electronAPI.copyPassword(entry.password);
-      vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 20 seconds." : result.error;
+      const result = await copyPasswordWithConfirmation(entry.password);
+      vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
     }),
     makeButton("Edit", () => renderEntryEditor(entry, item)),
     makeButton("Delete", async () => {
@@ -347,8 +353,8 @@ document.getElementById("generateBtn").addEventListener("click", () => {
 
 document.getElementById("copyBtn").addEventListener("click", async () => {
   if (output.textContent === "Click generate to start") return;
-  const result = await window.electronAPI.copyPassword(output.textContent);
-  vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 20 seconds." : result.error;
+  const result = await copyPasswordWithConfirmation(output.textContent);
+  vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
 });
 
 document.getElementById("saveButton").addEventListener("click", async () => {

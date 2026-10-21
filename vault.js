@@ -76,7 +76,10 @@ class PasswordVault {
     const migrated = envelope.version === LEGACY_FORMAT_VERSION;
     if (migrated) {
       try {
-        await this.persistEntries(migrateEntries(entries), candidateKey, envelope);
+        const migratedEntries = migrateEntries(entries);
+        validateEntries(migratedEntries);
+        await backupLegacyVault(this.filePath, contents);
+        await this.persistEntries(migratedEntries, candidateKey, envelope);
       } catch (error) {
         candidateKey.fill(0);
         throw new Error(`Could not upgrade the vault: ${error.message}`);
@@ -254,17 +257,29 @@ function decryptEntries(envelope, key) {
 
 function migrateEntries(entries) {
   const now = new Date().toISOString();
-  return entries.map((entry) => ({
-    id: isValidEntryId(entry.id) ? entry.id : crypto.randomUUID(),
-    site: entry.site.trim(),
-    username: '',
-    password: entry.password,
-    notes: '',
-    category: 'login',
-    favorite: false,
-    createdAt: now,
-    updatedAt: now
-  }));
+  const usedIds = new Set();
+  return entries.map((entry) => {
+    let id = isValidEntryId(entry.id) && !usedIds.has(entry.id) ? entry.id : crypto.randomUUID();
+    while (usedIds.has(id)) id = crypto.randomUUID();
+    usedIds.add(id);
+    return {
+      id,
+      site: entry.site.trim(),
+      username: entry.username ?? '',
+      password: entry.password,
+      notes: entry.notes ?? '',
+      category: entry.category ?? 'login',
+      favorite: entry.favorite ?? false,
+      createdAt: entry.createdAt ?? now,
+      updatedAt: entry.updatedAt ?? now
+    };
+  });
+}
+
+async function backupLegacyVault(filePath, contents) {
+  const backupPath = `${filePath}.v1-${Date.now()}-${crypto.randomUUID()}.bak`;
+  await fs.writeFile(backupPath, contents, { flag: 'wx', mode: 0o600 });
+  return backupPath;
 }
 
 async function readVaultFile(filePath) {
@@ -399,8 +414,8 @@ function validateLegacyEntries(entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
       throw new Error('Invalid legacy vault entry.');
     }
-    const keys = Object.keys(entry).sort().join(',');
-    if (keys !== 'password,site' && keys !== 'id,password,site') {
+    const allowedKeys = new Set(['id', 'site', 'username', 'password', 'notes', 'category', 'favorite', 'createdAt', 'updatedAt']);
+    if (Object.keys(entry).some((key) => !allowedKeys.has(key)) || !Object.hasOwn(entry, 'site') || !Object.hasOwn(entry, 'password')) {
       throw new Error('Invalid legacy vault entry fields.');
     }
     if (typeof entry.site !== 'string' || entry.site.trim().length === 0 || entry.site.length > MAX_SITE_LENGTH) {
@@ -409,6 +424,20 @@ function validateLegacyEntries(entries) {
     if (typeof entry.password !== 'string' || entry.password.length === 0 || entry.password.length > MAX_PASSWORD_LENGTH) {
       throw new Error('Invalid legacy password.');
     }
+    if (entry.username !== undefined && (typeof entry.username !== 'string' || entry.username.length > MAX_USERNAME_LENGTH)) {
+      throw new Error('Invalid legacy username.');
+    }
+    if (entry.notes !== undefined && (typeof entry.notes !== 'string' || entry.notes.length > MAX_NOTES_LENGTH)) {
+      throw new Error('Invalid legacy notes.');
+    }
+    if (entry.category !== undefined && (typeof entry.category !== 'string' || !CATEGORIES.has(entry.category))) {
+      throw new Error('Invalid legacy category.');
+    }
+    if (entry.favorite !== undefined && typeof entry.favorite !== 'boolean') {
+      throw new Error('Invalid legacy favorite flag.');
+    }
+    if (entry.createdAt !== undefined) validateTimestamp(entry.createdAt);
+    if (entry.updatedAt !== undefined) validateTimestamp(entry.updatedAt);
   });
 }
 
