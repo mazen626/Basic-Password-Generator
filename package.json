@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "icon": "electron scripts/render-icon.js"
   },
   "keywords": [],
   "author": "",
@@ -28,12 +29,14 @@
       "renderer.js",
       "page.html",
       "vault.js",
-      "package.json"
+      "package.json",
+      "build/icon.ico"
     ],
     "win": {
       "target": [
         "portable"
-      ]
+      ],
+      "icon": "build/icon.ico"
     }
   },
   "dependencies": {

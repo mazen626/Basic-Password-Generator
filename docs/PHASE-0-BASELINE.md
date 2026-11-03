@@ -17,7 +17,9 @@ Results of the Phase 0 stabilization pass (2026-11-03). Use these numbers and fi
 
 **Fonts:** all six font files `page.html` uses are inside `app.asar`. In the packaged app, IBM Plex Sans loads and is the body font.
 
-**Not yet configured:** an application icon (the default Electron icon is used) and code signing with a real certificate.
+**App icon:** a "VL" icon (`build/icon.ico`) is embedded in both executables and set as the window icon. Its source is `build/icon-source.html`; regenerate the icon files with `npm run icon`.
+
+**Not yet configured:** code signing with a real certificate.
 
 ## Vault location
 

@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: "IBM Plex Sans"; font-weight: 700; src: url("FONT_URL") format("woff2"); }
+  html, body { margin: 0; width: 1024px; height: 1024px; background: transparent; overflow: hidden; }
+  .tile {
+    position: absolute; inset: 56px; border-radius: 232px;
+    background:
+      radial-gradient(circle at 30% 18%, #2a2160 0%, transparent 55%),
+      linear-gradient(150deg, #15142e 0%, #0b0b16 55%, #05050b 100%);
+    box-shadow: inset 0 0 0 14px #3a3270, inset 0 0 120px #6b55e033;
+  }
+  .mark {
+    position: absolute; inset: 56px; display: grid; place-items: center;
+    font: 700 520px/1 "IBM Plex Sans", sans-serif; letter-spacing: -0.06em;
+    filter: drop-shadow(0 0 36px #9b7bff55);
+  }
+  .mark span {
+    display: inline-block; padding: 0 0.058em 0 0.02em; margin-bottom: 28px;
+    background: linear-gradient(165deg, #e4dcff 0%, #a98cff 45%, #6f7dff 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+  }
+</style>
+</head>
+<body>
+  <div class="tile"></div>
+  <div class="mark"><span>VL</span></div>
+</body>
+</html>
