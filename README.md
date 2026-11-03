@@ -1,43 +1,135 @@
 # VLAUTR
 
-VLAUTR is the current working name for this Electron password generator and encrypted local password vault.
+**A local-first password generator and encrypted password vault for Windows.**
 
-![Electron](https://img.shields.io/badge/Built%20with-Electron-47848F?style=flat&logo=electron&logoColor=white)
+![Electron](https://img.shields.io/badge/Electron-44-47848F?style=flat&logo=electron&logoColor=white)
 ![Platform](https://img.shields.io/badge/platform-Windows-0078D6?style=flat&logo=windows&logoColor=white)
+![Encryption](https://img.shields.io/badge/encryption-AES--256--GCM-7c5cff?style=flat)
+![Network](https://img.shields.io/badge/network-none-2ea043?style=flat)
+
+VLAUTR keeps your credentials on your own machine. Everything is encrypted with a key derived from your master password, nothing is sent over the network, and the master password is never written to disk.
+
+> VLAUTR is the project's working name and may change.
+
+## Screenshots
+
+| Unlock | Password generator |
+| :---: | :---: |
+| ![Unlock screen](docs/screenshots/unlock.png) | ![Password generator](docs/screenshots/generator.png) |
+| **Saved entries** | **Editing an entry and the File menu** |
+| ![Saved entries](docs/screenshots/entries.png) | ![Entry editor and File menu](docs/screenshots/edit-and-menu.png) |
+
+<sub>Screenshots use sample data in a throwaway vault.</sub>
 
 ## Features
 
-- Generate passwords with configurable length and lowercase, uppercase, number, and symbol sets.
-- Create a master-password protected vault. Vault entries are encrypted locally with AES-256-GCM and a key derived using PBKDF2.
-- Save site, username, password, notes, category, and favorite status for each entry.
-- Search and filter entries by category or favorites, with favorites and sites sorted for quick access.
-- Reveal passwords only on request; copying requires confirmation and clipboard contents are cleared after 10 seconds when possible. Other apps or clipboard history may still capture clipboard contents.
-- Edit and delete entries, with duplicate sites prevented.
-- Lock the vault manually or automatically after five minutes of inactivity.
-- Create encrypted backups and automatically back up older vaults before migration.
+**Password generator**
+- Length from 1 to 256 characters, with lowercase, uppercase, number, and symbol sets.
+- Uses the Web Crypto random source with unbiased sampling, and guarantees at least one character from every selected set.
+- Live strength rating (Weak / Fair / Strong) based on estimated entropy.
 
-## Requirements
+**Encrypted vault**
+- Create a vault protected by a master password (8 to 1024 characters).
+- Store site, username, password, notes, category, and favorite status for each entry.
+- Edit and delete entries; duplicate sites are rejected.
+- Search across sites, usernames, notes, and categories, and filter by category or favorites. Favorites are listed first.
 
-- [Node.js](https://nodejs.org) and npm
+**Safety by default**
+- Passwords stay hidden until you reveal them.
+- Copying needs a confirmation, and the clipboard is cleared after 10 seconds if it still holds the copied password.
+- The vault locks manually, from the File menu, after five minutes of inactivity, and when the window closes.
+- Create an encrypted backup or open the vault folder from the unlock screen, even before unlocking.
+- Older vault formats are upgraded automatically, with a backup taken before anything is rewritten.
 
-## Run locally
+**Interface**
+- A dark, purple-accented design with IBM Plex Sans and IBM Plex Mono, bundled locally.
+- A custom title bar with File, Edit, and View menus that match the app's theme.
+
+## Security model
+
+| | |
+| --- | --- |
+| Key derivation | PBKDF2-HMAC-SHA256, 600,000 iterations, 16-byte random salt |
+| Encryption | AES-256-GCM with a fresh 12-byte IV on every write |
+| Storage | A single `vault.json` file in the app's user-data folder |
+| Process isolation | Encryption and file access run only in Electron's main process. The interface runs sandboxed, with context isolation and no Node.js access, and talks to the main process through a small, validated IPC API. |
+| Network | None. The page's Content Security Policy only allows local resources. |
+
+The clipboard is shared with other apps and with Windows clipboard history, so treat copying as a convenience, not secure storage.
+
+## Getting started
+
+### Requirements
+
+- Windows 10 or 11
+- [Node.js](https://nodejs.org) with npm (developed with Node.js 24 and npm 12)
+
+### Run from source
 
 ```sh
 npm ci
 npm start
 ```
 
-The app opens as a Windows desktop window. The visible window title is currently **VLAUTR** and may change.
+Only one copy of the app can run at a time. Starting it again brings the open window to the front.
 
-## Build for Windows
+### Build a portable Windows executable
 
 ```sh
 npm run dist
 ```
 
-The portable build is written to the `dist` directory.
+The portable `.exe` is written to the `dist` folder.
+
+### Run the tests
+
+```sh
+npm test
+```
+
+Tests use Node's built-in test runner.
+
+## Where your data lives
+
+The vault is stored as `vault.json` in Electron's user-data folder (under `%APPDATA%`). Backups are saved next to it:
+
+- `vault-backup-<timestamp>-<id>.bak`: backups you create from the unlock screen.
+- `vault.json.v1-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
+
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
+
+## Project structure
+
+```
+main.js         Electron main process: window, IPC handlers, auto-lock, clipboard, menu actions
+vault.js        PasswordVault: key derivation, encryption, validation, migration, file writes
+preload.js      Exposes the window.electronAPI bridge to the interface
+renderer.js     Interface logic: generator, vault entries, unlock flow, title bar menus
+page.html       The single page: markup, styles, and Content Security Policy
+test/           Vault tests (node --test)
+docs/           Screenshots and project documentation
+```
+
+## Roadmap
+
+Development is planned in phases:
+
+| Phase | Focus |
+| --- | --- |
+| 0. Stabilization | Packaging checks, broader tests, recovery scenarios, threat model |
+| 1. Security foundation | Less plaintext in the interface, ID-based copy, safer writes, master-password change |
+| 2. Vault management | Backup manager and restore, password history, secure notes, imports |
+| 3. Password intelligence | Password health, weak and reused password detection, passphrases |
+| 4. Application experience | Dashboard, custom categories, shortcuts, onboarding, accessibility |
+| 5. Multi-device | Optional end-to-end encrypted sync |
+| 6. Platform expansion | Browser extension, Windows Hello, mobile |
 
 ## Built with
 
 - [Electron](https://www.electronjs.org/)
-- HTML, CSS, and JavaScript
+- HTML, CSS, and JavaScript with no front-end framework
+- [IBM Plex](https://github.com/IBM/plex) via [Fontsource](https://fontsource.org/)
+
+## License
+
+ISC, as declared in `package.json`.
