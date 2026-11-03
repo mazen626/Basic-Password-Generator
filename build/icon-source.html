@@ -21,6 +21,9 @@
     display: inline-block; padding: 0 0.058em 0 0.02em; margin-bottom: 28px;
     background: linear-gradient(165deg, #e4dcff 0%, #a98cff 45%, #6f7dff 100%);
     -webkit-background-clip: text; background-clip: text; color: transparent;
+    /* Optical centering: the V is heavy at the top and the L at the bottom left,
+       so the letters look high and left when their bounding box is centered. */
+    transform: translate(15px, 6px);
   }
 </style>
 </head>
