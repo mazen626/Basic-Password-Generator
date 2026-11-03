@@ -1,6 +1,8 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('electronAPI', {
+  platform: process.platform,
+  menuAction: (action) => ipcRenderer.invoke('window:menu-action', action),
   getVaultStatus: () => ipcRenderer.invoke('vault:status'),
   backupVault: () => ipcRenderer.invoke('vault:backup'),
   openVaultFolder: () => ipcRenderer.invoke('vault:open-folder'),

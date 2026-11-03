@@ -3,140 +3,223 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
-<title>Password Generator</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; font-src 'self'; style-src 'self' 'unsafe-inline'; object-src 'none'; base-uri 'none'">
+<title>VLAUTR</title>
 <style>
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 400; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-400-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 500; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-500-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 600; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-600-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Sans"; font-style: normal; font-weight: 700; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-sans/files/ibm-plex-sans-latin-700-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-400-normal.woff2") format("woff2"); }
+  @font-face { font-family: "IBM Plex Mono"; font-style: normal; font-weight: 500; font-display: swap; src: url("./node_modules/@fontsource/ibm-plex-mono/files/ibm-plex-mono-latin-500-normal.woff2") format("woff2"); }
   :root {
-    --bg: #141922;
-    --panel: #1c232e;
-    --border: #2b3341;
-    --text: #e9e7e1;
-    --muted: #8891a3;
-    --accent: #f0a93b;
+    --font-sans: "IBM Plex Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    --font-mono: "IBM Plex Mono", ui-monospace, "Cascadia Code", Consolas, monospace;
+    color-scheme: dark;
+    --canvas: #05050b;
+    --surface: #0b0b16;
+    --raised: #111323;
+    --border: #252743;
+    --text: #f0efff;
+    --muted: #9293ad;
+    --accent: #9b7bff;
+    --accent-deep: #171332;
+    --blue: #536dfe;
+    --focus: #a9b7ff;
+    --danger: #ff8998;
+    --border-hover: #4a4475;
+    --divider: #1e1d36;
+    --label: #cfccf0;
   }
   * { box-sizing: border-box; }
+  html { min-width: 320px; background: var(--canvas); scroll-padding-top: 52px; }
   body {
     margin: 0;
     min-height: 100vh;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--bg);
+    background: var(--canvas);
     color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    padding: 24px;
+    font: 14px/1.5 var(--font-sans);
+    padding: 58px 18px 72px;
   }
-  .card {
-    width: 100%;
-    max-width: 480px;
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 32px;
+  button, input, select, textarea { font: inherit; }
+  button { color: inherit; }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 2px;
   }
-  h1 {
-    font-size: 22px;
-    margin: 0 0 6px;
+  .titlebar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: 4px; height: env(titlebar-area-height, 36px); padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px) 0 calc(env(titlebar-area-x, 0px) + 10px); background: var(--surface); box-shadow: 0 1px 0 var(--border); user-select: none; -webkit-app-region: drag; }
+  .titlebar-brand { display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; color: var(--text); font-size: 11px; font-weight: 600; letter-spacing: .16em; }
+  .brand-mark { width: 10px; height: 10px; border-radius: 3px; background: linear-gradient(135deg, var(--accent), var(--blue)); box-shadow: 0 0 10px #9b7bff66; }
+  .menubar { display: flex; gap: 2px; }
+  .platform-darwin .menubar { display: none; }
+  .menu { position: relative; }
+  .titlebar button { min-height: 26px; padding: 3px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; -webkit-app-region: no-drag; }
+  .titlebar button:hover:not(:disabled), .titlebar .menu-trigger[aria-expanded="true"] { border-color: #322d5b; background: var(--accent-deep); color: var(--text); }
+  .titlebar button:active:not(:disabled) { transform: none; }
+  .menu-list { position: absolute; top: calc(100% + 6px); left: 0; display: grid; min-width: 210px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--raised); box-shadow: 0 14px 34px #02020acc; -webkit-app-region: no-drag; }
+  .menu-list[hidden] { display: none; }
+  .titlebar .menu-list button { display: flex; align-items: center; justify-content: space-between; gap: 28px; width: 100%; color: var(--text); text-align: left; }
+  .titlebar .menu-list button:hover:not(:disabled), .titlebar .menu-list button:focus-visible { border-color: transparent; background: var(--accent-deep); outline: none; }
+  .menu-list kbd { color: var(--muted); font: 11px var(--font-sans); }
+  .menu-sep { height: 1px; margin: 4px 2px; background: var(--divider); }
+  .app-shell { position: relative; z-index: 1; width: 100%; max-width: 520px; margin: 0 auto; }
+  .wall-art { position: fixed; inset: 0; z-index: 0; display: grid; place-items: center; overflow: hidden; background: radial-gradient(ellipse at 50% 50%, #0a0a18aa 0%, #05050baa 58%, #05050bf2 100%); pointer-events: none; }
+  .wall-art pre { margin: 0; color: #8c7de1; font: clamp(16px, 3.2vh, 25px)/1.14 ui-monospace, "Cascadia Code", Consolas, monospace; opacity: .3; text-shadow: 0 0 12px #6955c433; white-space: pre; }
+  .panel { margin-top: 16px; padding: 21px; border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg, #0d0d19e8 0%, #090a13e8 100%); box-shadow: 0 12px 36px #02020a88; }
+  .section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 17px; }
+  h2 { margin: 0; font-size: 17px; font-weight: 600; letter-spacing: -.02em; }
+  .section-note { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
+  .field { display: grid; align-content: start; gap: 7px; margin: 0 0 14px; }
+  .field label, .vault-label { color: var(--label); font-size: 12px; font-weight: 600; }
+  .field small, .helper { color: var(--muted); font-size: 11px; }
+  .field input:not([type="checkbox"]), .field select, .field textarea, .entry-filters input, .entry-filters select {
+    width: 100%; min-width: 0; border: 1px solid var(--border); border-radius: 9px; background: #080912; color: var(--text); padding: 10px 12px; transition: border-color .18s, background .18s;
   }
-  p.sub {
-    color: var(--muted);
-    margin: 0 0 28px;
-    font-size: 14px;
-    line-height: 1.5;
-  }
-  .output {
-    background: var(--bg);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 18px;
-    font-family: ui-monospace, "SF Mono", Consolas, monospace;
-    font-size: 20px;
-    letter-spacing: 1px;
-    word-break: break-all;
-    min-height: 28px;
-    margin-bottom: 20px;
-  }
-  .row {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
-  }
-  .row label {
-    font-size: 14px;
-    color: var(--muted);
-  }
-  .row input[type="number"] {
-    width: 60px;
-    background: var(--bg);
-    border: 1px solid var(--border);
-    color: var(--text);
-    border-radius: 6px;
-    padding: 6px 8px;
-    font-size: 14px;
-  }
-  .field { display: grid; gap: 8px; margin-bottom: 20px; }
-  .field input:not([type="checkbox"]), .field select, .field textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
-  .entry-filters input, .entry-filters select { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); border-radius: 6px; padding: 10px; font: inherit; }
-  .field textarea { min-height: 76px; resize: vertical; }
-  .entry-actions { display: flex; flex-wrap: wrap; gap: 8px; }
-  .entry-actions button { flex: 1 1 90px; }
+  .field input:not([type="checkbox"]):hover, .field select:hover, .field textarea:hover, .entry-filters input:hover, .entry-filters select:hover { border-color: var(--border-hover); }
+  .field textarea { min-height: 68px; resize: vertical; }
+  input::placeholder, textarea::placeholder { color: #6c6b88; }
+  select { appearance: auto; }
+  .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .check { display: inline-flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; cursor: pointer; }
+  .check input { width: 15px; height: 15px; margin: 0; accent-color: var(--accent); }
+  .favorite-row { display: flex; width: fit-content; margin: 0 0 15px; }
+  .output-wrap { margin: 0 0 13px; padding: 14px; border: 1px solid #322d5b; border-radius: 11px; background: #080912; }
+  .output-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; }
+  .strength { display: inline-flex; align-items: center; gap: 6px; color: var(--accent); letter-spacing: .04em; }
+  .strength[data-level="weak"] { color: var(--danger); }
+  .strength[data-level="fair"] { color: #ffc46b; }
+  .strength[data-level="strong"] { color: #7ee0b0; }
+  .strength::before { width: 6px; height: 6px; border-radius: 50%; background: currentColor; content: ""; }
+  .output.is-empty { color: var(--muted); font: 14px/32px var(--font-sans); letter-spacing: 0; }
+  .output { min-height: 32px; overflow-wrap: anywhere; color: #f6faf7; font: 18px/1.5 var(--font-mono); letter-spacing: .025em; }
+  .generator-controls { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 13px; }
+  .length-control { display: flex; align-items: center; gap: 9px; color: var(--muted); font-size: 12px; }
+  .length-control input { width: 61px; padding: 7px 8px; border: 1px solid var(--border); border-radius: 8px; background: #080912; color: var(--text); }
+  .checkboxes { display: flex; flex-wrap: wrap; gap: 9px 16px; padding: 12px 0 16px; border-top: 1px solid var(--divider); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 9px; }
+  button { min-height: 38px; padding: 9px 13px; border: 1px solid var(--border); border-radius: 9px; background: var(--raised); color: var(--text); font-size: 12px; font-weight: 600; cursor: pointer; transition: background .16s, border-color .16s, transform .16s; }
+  button:hover:not(:disabled) { border-color: var(--border-hover); background: #1b1c34; }
+  button:active:not(:disabled) { transform: translateY(1px); }
+  button:disabled { cursor: not-allowed; opacity: .45; }
+  #generateBtn, #saveButton, #unlockButton, .primary-button { border-color: var(--accent); background: var(--accent); color: #0c081a; }
+  #generateBtn:hover:not(:disabled), #saveButton:hover:not(:disabled), #unlockButton:hover:not(:disabled), .primary-button:hover:not(:disabled) { border-color: #c4b5fd; background: #b29aff; }
+  #copyBtn, #lockBtn { background: transparent; }
+  #unlockButton { width: 100%; margin-top: 2px; }
   #confirmationField[hidden] { display: none; }
-  .field label, .vault-label { color: var(--muted); font-size: 14px; }
-  .hidden { display: none; }
-  #unlockStatus, #vaultStatus { color: var(--muted); font-size: 13px; min-height: 18px; margin: 12px 0; }
-  #entriesList { list-style: none; padding: 0; display: grid; gap: 8px; }
-  #entriesList li { display: grid; gap: 4px; padding: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; overflow-wrap: anywhere; }
-  #entriesList span { font-family: ui-monospace, "SF Mono", Consolas, monospace; }
-  .entry-filters { display: grid; gap: 8px; margin-bottom: 16px; }
-  .checkboxes {
-    display: grid;
-    gap: 10px;
-    margin-bottom: 24px;
+  .hidden { display: none !important; }
+  #unlockStatus { min-height: 18px; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+  #unlockStatus:empty { min-height: 0; margin: 0; }
+  #vaultStatus { position: fixed; left: 50%; bottom: 18px; z-index: 10; width: max-content; max-width: min(480px, calc(100vw - 32px)); margin: 0; padding: 10px 16px; border: 1px solid #322d5b; border-radius: 10px; background: var(--raised); box-shadow: 0 10px 30px #02020acc; color: var(--text); font-size: 12px; transform: translateX(-50%); }
+  #vaultStatus:empty { display: none; }
+  #recoveryActions { margin-top: 14px; padding: 13px; border: 1px solid #322d5b; border-radius: 10px; background: var(--accent-deep); }
+  #recoveryNotice { margin: 0 0 10px; color: var(--label); font-size: 12px; }
+  #recoveryActions .buttons button { flex: 1 1 150px; }
+  .entry-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin: 23px 0 12px; }
+  .entry-list-heading h2 { font-size: 16px; }
+  .entry-list-heading small { color: var(--muted); font-size: 10px; }
+  .entry-filters { display: grid; grid-template-columns: 1fr 155px; gap: 9px; margin-bottom: 12px; }
+  .entry-filters .check { grid-column: 1 / -1; }
+  #entriesList { display: grid; gap: 9px; margin: 0; padding: 0; list-style: none; }
+  #entriesList > li.empty-state { border-style: dashed; background: transparent; color: var(--muted); font-size: 12px; text-align: center; }
+  #entriesList > li { min-width: 0; padding: 13px; border: 1px solid #292744; border-radius: 11px; background: #090a14; overflow-wrap: anywhere; }
+  .entry-card-head { display: grid; gap: 2px; }
+  #entriesList strong { color: var(--text); font-size: 13px; }
+  #entriesList .entry-detail { display: block; margin-top: 3px; color: var(--muted); font: 11px/1.4 var(--font-sans); }
+  #entriesList .entry-password { display: block; margin: 10px 0; color: #d9d3ff; font: 12px/1.5 var(--font-mono); letter-spacing: .04em; }
+  .entry-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+  .entry-actions button { flex: 1 1 72px; min-height: 32px; padding: 6px 9px; font-size: 11px; }
+  #entriesList form { display: grid; gap: 9px; }
+  #entriesList form .field { margin: 0; }
+  #entriesList form .field input:not([type="checkbox"]), #entriesList form .field select, #entriesList form .field textarea { padding: 8px 10px; font-size: 12px; }
+  #entriesList form .entry-actions { margin-top: 4px; }
+  #entriesList form .check { margin: 2px 0; }
+  .danger-button { border-color: #633343; color: #ff9ead; }
+  .danger-button:hover:not(:disabled) { border-color: var(--danger); background: #2a1420; }
+  .vault-section { margin-top: 25px; padding-top: 21px; border-top: 1px solid var(--divider); }
+  .category-row { align-items: end; }
+  .category-row .favorite-row { margin-bottom: 24px; }
+  .security-note { margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
+  @media (max-width: 520px) {
+    body { padding: 48px 10px 72px; }
+    .panel { padding: 16px; }
+    .field-grid { grid-template-columns: 1fr; gap: 0; }
+    .category-row .favorite-row { margin-bottom: 15px; }
   }
-  .check {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    color: var(--muted);
-    font-size: 14px;
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
   }
-  .check input {
-    accent-color: var(--accent);
-  }
-  .buttons {
-    display: flex;
-    gap: 10px;
-  }
-  button {
-    flex: 1;
-    padding: 12px;
-    border-radius: 8px;
-    border: none;
-    font-size: 14px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  #generateBtn {
-    background: var(--accent);
-    color: #201304;
-  }
-  #generateBtn:hover { filter: brightness(1.08); }
-  #copyBtn {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-  #copyBtn:hover { border-color: var(--accent); }
 </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Password generator</h1>
-    <p class="sub">Create secure passwords and store them in your encrypted vault.</p>
+  <header class="titlebar">
+    <span class="titlebar-brand"><span class="brand-mark" aria-hidden="true"></span>VLAUTR</span>
+    <nav class="menubar" aria-label="Application menu">
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="fileMenu">File</button>
+        <div class="menu-list" id="fileMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="lock">Lock vault</button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="minimize">Minimize</button>
+          <button type="button" role="menuitem" data-action="quit">Quit <kbd>Alt+F4</kbd></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="editMenu">Edit</button>
+        <div class="menu-list" id="editMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="undo">Undo <kbd>Ctrl+Z</kbd></button>
+          <button type="button" role="menuitem" data-action="redo">Redo <kbd>Ctrl+Y</kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="cut">Cut <kbd>Ctrl+X</kbd></button>
+          <button type="button" role="menuitem" data-action="copy">Copy <kbd>Ctrl+C</kbd></button>
+          <button type="button" role="menuitem" data-action="paste">Paste <kbd>Ctrl+V</kbd></button>
+          <button type="button" role="menuitem" data-action="selectAll">Select all <kbd>Ctrl+A</kbd></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="viewMenu">View</button>
+        <div class="menu-list" id="viewMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="zoomIn">Zoom in <kbd>Ctrl+Shift+=</kbd></button>
+          <button type="button" role="menuitem" data-action="zoomOut">Zoom out <kbd>Ctrl+-</kbd></button>
+          <button type="button" role="menuitem" data-action="resetZoom">Actual size <kbd>Ctrl+0</kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="toggleFullScreen">Full screen <kbd>F11</kbd></button>
+        </div>
+      </div>
+    </nav>
+  </header>
+  <div class="wall-art" aria-hidden="true"><pre>░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
+ ░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░
+ ░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░
+  ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░
+  ░▒▓█▓▓█▓▒░ ░▒▓█▓▒░
+   ░▒▓██▓▒░  ░▒▓████████▓▒░
 
-    <section id="unlockPanel">
-      <h2 id="unlockHeading">Unlock vault</h2>
+
+ ░▒▓██████▓▒░░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓████████▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░░▒▓█▓▒░
+░▒▓█▓▒░░▒▓█▓▒░░▒▓██████▓▒░
+
+
+░▒▓████████▓▒░▒▓███████▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓███████▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░
+   ░▒▓█▓▒░   ░▒▓█▓▒░░▒▓█▓▒░</pre></div>
+  <main class="app-shell">
+    <section id="unlockPanel" class="panel">
+      <div class="section-heading">
+        <div>
+          <h2 id="unlockHeading">Unlock vault</h2>
+          <p class="section-note">Your master password never leaves this device.</p>
+        </div>
+      </div>
       <form id="unlockForm">
         <div class="field">
           <label for="masterPassword">Master password</label>
@@ -155,97 +238,108 @@
           <button id="openVaultFolderBtn" type="button">Open vault folder</button>
         </div>
       </div>
-      <p id="unlockStatus" role="status"></p>
+      <p id="unlockStatus" role="status" aria-live="polite"></p>
     </section>
 
-    <section id="vaultPanel" class="hidden">
-      <div class="buttons">
+    <section id="vaultPanel" class="panel hidden">
+      <div class="section-heading">
+        <div>
+          <h2>Your vault</h2>
+          <p class="section-note">A private home for the details you rely on.</p>
+        </div>
         <button id="lockBtn" type="button">Lock vault</button>
       </div>
-      <p id="vaultStatus" role="status"></p>
+      
+      <section aria-labelledby="generatorHeading">
+        <div class="section-heading">
+          <div>
+            <h2 id="generatorHeading">Password generator</h2>
+            <p class="section-note">Build a strong, one-of-a-kind password.</p>
+          </div>
+        </div>
+        <div class="output-wrap">
+          <div class="output-top"><span>New password</span><span class="strength" id="strength">Ready to create</span></div>
+          <div class="output is-empty" id="output" aria-live="polite">Click generate to start</div>
+        </div>
+        <div class="generator-controls">
+          <label class="length-control" for="length">Length <input type="number" id="length" value="16" min="1" max="256"></label>
+          <span class="helper">Up to 256 characters</span>
+        </div>
+        <div class="checkboxes">
+          <label class="check" for="includeLowercase"><input type="checkbox" id="includeLowercase" checked> Lowercase</label>
+          <label class="check" for="includeUppercase"><input type="checkbox" id="includeUppercase" checked> Uppercase</label>
+          <label class="check" for="includeNumbers"><input type="checkbox" id="includeNumbers" checked> Numbers</label>
+          <label class="check" for="includeSymbols"><input type="checkbox" id="includeSymbols"> Symbols</label>
+        </div>
+        <div class="buttons">
+          <button id="generateBtn" type="button">Generate password</button>
+          <button id="copyBtn" type="button">Copy</button>
+        </div>
+      </section>
 
-      <div class="field">
-        <label for="site">Site or account</label>
-        <input type="text" id="site" maxlength="200" autocomplete="off" required>
-        <small>Each site can have one saved entry.</small>
-      </div>
-      <div class="field">
-        <label for="username">Username</label>
-        <input type="text" id="username" maxlength="255" autocomplete="off">
-      </div>
-      <div class="field">
-        <label for="category">Category</label>
-        <select id="category">
-          <option value="login">Login</option>
-          <option value="email">Email</option>
-          <option value="finance">Finance</option>
-          <option value="identity">Identity</option>
-          <option value="work">Work</option>
-          <option value="other">Other</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="notes">Notes</label>
-        <textarea id="notes" maxlength="4000"></textarea>
-      </div>
-      <label class="check" for="favorite">
-        <input type="checkbox" id="favorite">
-        Favorite
-      </label>
+      <section aria-labelledby="saveHeading" class="vault-section">
+        <div class="section-heading">
+          <div>
+            <h2 id="saveHeading">Save an entry</h2>
+            <p class="section-note">Add an account to your encrypted vault.</p>
+          </div>
+        </div>
+        <div class="field-grid">
+          <div class="field">
+            <label for="site">Site or account</label>
+            <input type="text" id="site" maxlength="200" autocomplete="off" required placeholder="example.com">
+            <small>Each site can have one saved entry.</small>
+          </div>
+          <div class="field">
+            <label for="username">Username</label>
+            <input type="text" id="username" maxlength="255" autocomplete="off" placeholder="name@example.com">
+          </div>
+        </div>
+        <div class="field-grid category-row">
+          <div class="field">
+            <label for="category">Category</label>
+            <select id="category">
+              <option value="login">Login</option>
+              <option value="email">Email</option>
+              <option value="finance">Finance</option>
+              <option value="identity">Identity</option>
+              <option value="work">Work</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <label class="check favorite-row" for="favorite"><input type="checkbox" id="favorite"> Add to favorites</label>
+        </div>
+        <div class="field">
+          <label for="notes">Notes</label>
+          <textarea id="notes" maxlength="4000" placeholder="Optional details"></textarea>
+        </div>
+        <button id="saveButton" type="button">Save to vault</button>
+      </section>
 
-      <div class="output" id="output">Click generate to start</div>
-
-      <div class="row">
-        <label for="length">Length</label>
-        <input type="number" id="length" value="8" min="1" max="256">
-      </div>
-
-      <div class="checkboxes">
-        <label class="check" for="includeLowercase">
-          <input type="checkbox" id="includeLowercase" checked>
-          Include lowercase letters
-        </label>
-        <label class="check" for="includeUppercase">
-          <input type="checkbox" id="includeUppercase" checked>
-          Include uppercase letters
-        </label>
-        <label class="check" for="includeNumbers">
-          <input type="checkbox" id="includeNumbers">
-          Include numbers
-        </label>
-        <label class="check" for="includeSymbols">
-          <input type="checkbox" id="includeSymbols">
-          Include symbols
-        </label>
-      </div>
-
-      <div class="buttons">
-        <button id="generateBtn" type="button">Generate</button>
-        <button id="copyBtn" type="button">Copy</button>
-        <button id="saveButton" type="button">Save entry</button>
-      </div>
-
-      <h2>Saved entries</h2>
-      <small>Copying requires confirmation. Copied passwords clear from the clipboard after 10 seconds, but other apps or clipboard history may capture them. The clipboard is not secure storage.</small>
-      <div class="entry-filters">
-        <input type="search" id="entrySearch" placeholder="Search site, username, or notes" aria-label="Search saved entries">
-        <select id="categoryFilter" aria-label="Filter by category">
-          <option value="all">All categories</option>
-          <option value="login">Login</option>
-          <option value="email">Email</option>
-          <option value="finance">Finance</option>
-          <option value="identity">Identity</option>
-          <option value="work">Work</option>
-          <option value="other">Other</option>
-        </select>
-        <label class="check" for="favoriteFilter">
-          <input type="checkbox" id="favoriteFilter">
-          Favorites only
-        </label>
-      </div>
-      <ul id="entriesList"></ul>
+      <section aria-labelledby="entriesHeading" class="vault-section">
+        <div class="entry-list-heading">
+          <h2 id="entriesHeading">Saved entries</h2>
+          <small>Passwords stay hidden until revealed</small>
+        </div>
+        <div class="entry-filters">
+          <input type="search" id="entrySearch" placeholder="Search your vault" aria-label="Search saved entries">
+          <select id="categoryFilter" aria-label="Filter by category">
+            <option value="all">All categories</option>
+            <option value="login">Login</option>
+            <option value="email">Email</option>
+            <option value="finance">Finance</option>
+            <option value="identity">Identity</option>
+            <option value="work">Work</option>
+            <option value="other">Other</option>
+          </select>
+          <label class="check" for="favoriteFilter"><input type="checkbox" id="favoriteFilter"> Favorites only</label>
+        </div>
+        <ul id="entriesList"></ul>
+        <p class="security-note">Copying requires confirmation. Copied passwords clear from the clipboard after 10 seconds, but other apps or clipboard history may capture them. The clipboard is not secure storage.</p>
+      </section>
     </section>
-  </div>
+  </main>
+  <p id="vaultStatus" role="status" aria-live="polite"></p>
 <script src="./renderer.js"></script>
 </body>
 </html>

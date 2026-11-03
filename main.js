@@ -8,6 +8,8 @@ const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
 const IDLE_LOCK_MS = 5 * 60 * 1000;
 const CLIPBOARD_CLEAR_MS = 10 * 1000;
+const TITLE_BAR_HEIGHT = 36;
+const ZOOM_STEP = 0.5;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
@@ -173,6 +175,43 @@ registerVaultHandler('vault:copy-password', (password, token) => {
   return result;
 });
 
+ipcMain.handle('window:menu-action', (event, action) => {
+  if (!isTrustedFrame(event)) return { success: false, error: 'Unauthorized caller.' };
+  const contents = event.sender;
+  const win = BrowserWindow.fromWebContents(contents);
+  switch (action) {
+    case 'undo':
+    case 'redo':
+    case 'cut':
+    case 'copy':
+    case 'paste':
+    case 'selectAll':
+      contents[action]();
+      break;
+    case 'zoomIn':
+      contents.setZoomLevel(Math.min(contents.getZoomLevel() + ZOOM_STEP, 3));
+      break;
+    case 'zoomOut':
+      contents.setZoomLevel(Math.max(contents.getZoomLevel() - ZOOM_STEP, -3));
+      break;
+    case 'resetZoom':
+      contents.setZoomLevel(0);
+      break;
+    case 'toggleFullScreen':
+      win?.setFullScreen(!win.isFullScreen());
+      break;
+    case 'minimize':
+      win?.minimize();
+      break;
+    case 'quit':
+      app.quit();
+      break;
+    default:
+      return { success: false, error: 'Unknown menu action.' };
+  }
+  return { success: true };
+});
+
 registerVaultHandler('vault:save-entry', async (entry) => {
   await vault.saveEntry(entry);
   armIdleLock();
@@ -201,6 +240,10 @@ function createWindow() {
   const win = new BrowserWindow({
     width: 520,
     height: 760,
+    title: 'VLAUTR',
+    backgroundColor: '#05050b',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: process.platform === 'darwin' ? true : { color: '#0b0b16', symbolColor: '#c9c3ff', height: TITLE_BAR_HEIGHT },
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -209,6 +252,8 @@ function createWindow() {
     }
   });
 
+  // Keep the default menu's keyboard shortcuts but draw our own themed menu bar in page.html.
+  if (process.platform !== 'darwin') win.setMenuBarVisibility(false);
   win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   win.webContents.on('will-navigate', (event, navigationUrl) => {
     if (navigationUrl !== PAGE_URL) event.preventDefault();
