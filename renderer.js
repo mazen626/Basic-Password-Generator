@@ -3,8 +3,13 @@ const UppercaseLetters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 const Numbers = "0123456789";
 const Symbols = "!@#$%^&*()_+[]{}|;:,.<>?";
 const IDLE_REPORT_INTERVAL = 30000;
+const STATUS_CLEAR_MS = 5000;
+const OUTPUT_PLACEHOLDER = "Click generate to start";
+const CATEGORY_LABELS = { login: "Login", email: "Email", finance: "Finance", identity: "Identity", work: "Work", other: "Other" };
 
 const output = document.getElementById("output");
+const strengthLabel = document.getElementById("strength");
+const saveButton = document.getElementById("saveButton");
 const lengthInput = document.getElementById("length");
 const siteInput = document.getElementById("site");
 const masterPasswordInput = document.getElementById("masterPassword");
@@ -29,6 +34,8 @@ const includeSymbols = document.getElementById("includeSymbols");
 let lastActivityReport = 0;
 let savedEntries = [];
 let searchTimer;
+let statusTimer;
+let editorCount = 0;
 
 function getRequiredCharacterSets() {
   const sets = [];
@@ -92,6 +99,45 @@ function validateLength() {
   return value;
 }
 
+function setVaultStatus(message) {
+  clearTimeout(statusTimer);
+  vaultStatus.textContent = message || "";
+  if (message) statusTimer = setTimeout(() => { vaultStatus.textContent = ""; }, STATUS_CLEAR_MS);
+}
+
+function hasGeneratedPassword() {
+  return !output.classList.contains("is-empty");
+}
+
+function setOutput(password) {
+  output.classList.toggle("is-empty", !password);
+  output.textContent = password || OUTPUT_PLACEHOLDER;
+  updateStrength(password);
+}
+
+function updateStrength(password) {
+  if (!password) {
+    strengthLabel.textContent = "Ready to create";
+    delete strengthLabel.dataset.level;
+    return;
+  }
+  const poolSize = getRequiredCharacterSets().join("").length;
+  const bits = password.length * Math.log2(Math.max(poolSize, 1));
+  const level = bits >= 80 ? "strong" : bits >= 50 ? "fair" : "weak";
+  strengthLabel.dataset.level = level;
+  strengthLabel.textContent = level === "strong" ? "Strong" : level === "fair" ? "Fair" : "Weak";
+}
+
+async function withDisabled(button, task) {
+  if (button.disabled) return;
+  button.disabled = true;
+  try {
+    return await task();
+  } finally {
+    button.disabled = false;
+  }
+}
+
 function makeButton(label, handler) {
   const button = document.createElement("button");
   button.type = "button";
@@ -143,6 +189,7 @@ function renderEntries() {
   });
   if (filteredEntries.length === 0) {
     const emptyState = document.createElement("li");
+    emptyState.className = "empty-state";
     emptyState.textContent = savedEntries.length ? "No entries match these filters." : "No saved entries yet.";
     entriesList.append(emptyState);
     return;
@@ -162,7 +209,7 @@ function renderEntry(entry) {
 
   const siteName = typeof savedEntry.site === "string" ? savedEntry.site : "Unknown site";
   const username = typeof savedEntry.username === "string" ? savedEntry.username : "";
-  const category = typeof savedEntry.category === "string" ? savedEntry.category : "Uncategorized";
+  const category = CATEGORY_LABELS[savedEntry.category] || "Uncategorized";
   const entryPassword = typeof savedEntry.password === "string" ? savedEntry.password : "";
   site.textContent = `${savedEntry.favorite === true ? "★ " : ""}${siteName}`;
   details.textContent = `${category} · ${username || "No username"}`;
@@ -179,22 +226,26 @@ function renderEntry(entry) {
   });
   const copyButton = makeButton("Copy", async () => {
     const result = await copyPasswordWithConfirmation(entryPassword);
-    vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
+    setVaultStatus(result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error);
   });
   revealButton.disabled = !entryPassword;
   copyButton.disabled = !entryPassword;
   actions.append(revealButton, copyButton);
   if (typeof savedEntry.id === "string") {
-    const deleteButton = makeButton("Delete", async () => {
-        if (!confirm(`Delete the saved entry for ${siteName}?`)) return;
-        const result = await window.electronAPI.deleteEntry(savedEntry.id);
-        if (!result.success) {
-          vaultStatus.textContent = result.error;
-          return;
-        }
+    const deleteButton = makeButton("Delete", () => withDisabled(deleteButton, async () => {
+      if (!confirm(`Delete the saved entry for ${siteName}?`)) return;
+      const result = await window.electronAPI.deleteEntry(savedEntry.id);
+      if (!result.success) {
+        setVaultStatus(result.error);
+        return;
+      }
+      try {
         await refreshEntries();
-        vaultStatus.textContent = "Entry deleted.";
-      });
+        setVaultStatus("Entry deleted.");
+      } catch (error) {
+        setVaultStatus(error.message);
+      }
+    }));
     deleteButton.className = "danger-button";
     actions.append(makeButton("Edit", () => renderEntryEditor(savedEntry, item)), deleteButton);
   }
@@ -223,19 +274,25 @@ function renderEntryEditor(entry, item) {
   const passwordLabel = document.createElement("label");
   const password = document.createElement("input");
   const actions = document.createElement("div");
+  const idPrefix = `edit-${++editorCount}`;
 
+  [[siteLabel, site, "site"], [usernameLabel, username, "username"], [passwordLabel, password, "password"], [notesLabel, notes, "notes"], [categoryLabel, category, "category"]]
+    .forEach(([label, control, name]) => {
+      control.id = `${idPrefix}-${name}`;
+      label.htmlFor = control.id;
+    });
   siteLabel.textContent = "Site or account";
   site.type = "text";
   site.maxLength = 200;
-  site.value = entry.site;
+  site.value = entry.site ?? "";
   site.addEventListener("input", () => site.setCustomValidity(""));
   usernameLabel.textContent = "Username";
   username.type = "text";
   username.maxLength = 255;
-  username.value = entry.username;
+  username.value = entry.username ?? "";
   notesLabel.textContent = "Notes";
   notes.maxLength = 4000;
-  notes.value = entry.notes;
+  notes.value = entry.notes ?? "";
   categoryLabel.textContent = "Category";
   ["login", "email", "finance", "identity", "work", "other"].forEach((value) => {
     const option = document.createElement("option");
@@ -243,15 +300,15 @@ function renderEntryEditor(entry, item) {
     option.textContent = value[0].toUpperCase() + value.slice(1);
     category.append(option);
   });
-  category.value = entry.category;
+  category.value = CATEGORY_LABELS[entry.category] ? entry.category : "other";
   favorite.type = "checkbox";
-  favorite.checked = entry.favorite;
+  favorite.checked = entry.favorite === true;
   favoriteField.className = "check";
-  favoriteField.append(favorite, document.createTextNode("Favorite"));
+  favoriteField.append(favorite, document.createTextNode(" Favorite"));
   passwordLabel.textContent = "Password";
   password.type = "password";
   password.maxLength = 4096;
-  password.value = entry.password;
+  password.value = entry.password ?? "";
   siteField.className = "field";
   passwordField.className = "field";
   actions.className = "entry-actions";
@@ -263,8 +320,7 @@ function renderEntryEditor(entry, item) {
   categoryField.className = "field";
   categoryField.append(categoryLabel, category);
   passwordField.append(passwordLabel, password);
-  actions.append(
-    makeButton("Save changes", async () => {
+  const saveChangesButton = makeButton("Save changes", () => withDisabled(saveChangesButton, async () => {
       const result = await window.electronAPI.updateEntry(entry.id, {
         site: site.value.trim(),
         username: username.value,
@@ -275,17 +331,22 @@ function renderEntryEditor(entry, item) {
       });
       if (!result.success) {
         showDuplicateSiteError(site, result.error);
-        vaultStatus.textContent = result.error;
+        setVaultStatus(result.error);
         return;
       }
-      await refreshEntries();
-      vaultStatus.textContent = "Entry updated.";
-    }),
-    makeButton("Cancel", () => item.replaceWith(renderEntry(entry)))
-  );
+      try {
+        await refreshEntries();
+        setVaultStatus("Entry updated.");
+      } catch (error) {
+        setVaultStatus(error.message);
+      }
+    }));
+  saveChangesButton.className = "primary-button";
+  actions.append(saveChangesButton, makeButton("Cancel", () => item.replaceWith(renderEntry(entry))));
   form.addEventListener("submit", (event) => event.preventDefault());
   form.append(siteField, usernameField, passwordField, notesField, categoryField, favoriteField, actions);
   item.replaceChildren(form);
+  site.focus();
 }
 
 async function initializeUnlockForm() {
@@ -316,20 +377,27 @@ function clearUnlockedView(message) {
   searchInput.value = "";
   categoryFilter.value = "all";
   favoriteFilter.checked = false;
-  output.textContent = "Click generate to start";
+  setOutput("");
   siteInput.value = "";
+  siteInput.setCustomValidity("");
+  document.getElementById("username").value = "";
+  document.getElementById("notes").value = "";
+  document.getElementById("category").value = "login";
+  document.getElementById("favorite").checked = false;
   unlockPanel.classList.remove("hidden");
   vaultPanel.classList.add("hidden");
   unlockStatus.textContent = message;
-  vaultStatus.textContent = "";
+  setVaultStatus("");
   masterPasswordInput.focus();
   initializeUnlockForm();
 }
 
-document.getElementById("unlockForm").addEventListener("submit", async (event) => {
+document.getElementById("unlockForm").addEventListener("submit", (event) => {
   event.preventDefault();
-  unlockStatus.textContent = "Unlocking...";
+  withDisabled(unlockButton, unlockVault);
+});
 
+async function unlockVault() {
   const masterPassword = masterPasswordInput.value;
   const confirmation = confirmationInput.value;
   if (!confirmationField.hidden && masterPassword !== confirmation) {
@@ -338,6 +406,7 @@ document.getElementById("unlockForm").addEventListener("submit", async (event) =
     return;
   }
 
+  unlockStatus.textContent = confirmationField.hidden ? "Unlocking..." : "Creating vault...";
   const result = await window.electronAPI.unlockVault(masterPassword, confirmation);
   masterPasswordInput.value = "";
   confirmationInput.value = "";
@@ -352,19 +421,21 @@ document.getElementById("unlockForm").addEventListener("submit", async (event) =
 
   unlockPanel.classList.add("hidden");
   vaultPanel.classList.remove("hidden");
-  vaultStatus.textContent = result.migrated ? "Vault upgraded and unlocked." : result.created ? "Vault created and unlocked." : "Vault unlocked.";
+  unlockStatus.textContent = "";
+  setVaultStatus(result.migrated ? "Vault upgraded and unlocked." : result.created ? "Vault created and unlocked." : "Vault unlocked.");
   lastActivityReport = 0;
 
   try {
     await refreshEntries();
   } catch (error) {
-    vaultStatus.textContent = error.message;
+    setVaultStatus(error.message);
   }
-});
+}
 
 document.getElementById("lockBtn").addEventListener("click", async () => {
   const result = await window.electronAPI.lockVault();
   if (result.success) clearUnlockedView("Vault locked.");
+  else setVaultStatus(result.error);
 });
 
 document.getElementById("backupVaultBtn").addEventListener("click", async () => {
@@ -396,7 +467,10 @@ function reportActivity() {
 
 lengthInput.addEventListener("input", validateLength);
 [includeLowercase, includeUppercase, includeNumbers, includeSymbols].forEach((checkbox) => {
-  checkbox.addEventListener("change", validateLength);
+  checkbox.addEventListener("change", () => {
+    validateLength();
+    if (hasGeneratedPassword()) setOutput("");
+  });
 });
 
 document.getElementById("generateBtn").addEventListener("click", () => {
@@ -405,16 +479,21 @@ document.getElementById("generateBtn").addEventListener("click", () => {
     lengthInput.reportValidity();
     return;
   }
-  output.textContent = generatePassword(length);
+  setOutput(generatePassword(length));
 });
 
 document.getElementById("copyBtn").addEventListener("click", async () => {
-  if (output.textContent === "Click generate to start") return;
+  if (!hasGeneratedPassword()) {
+    setVaultStatus("Generate a password before copying.");
+    return;
+  }
   const result = await copyPasswordWithConfirmation(output.textContent);
-  vaultStatus.textContent = result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
+  setVaultStatus(result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error);
 });
 
-document.getElementById("saveButton").addEventListener("click", async () => {
+saveButton.addEventListener("click", () => withDisabled(saveButton, saveNewEntry));
+
+async function saveNewEntry() {
   const password = output.textContent;
   const site = siteInput.value.trim();
   const username = document.getElementById("username").value;
@@ -429,15 +508,15 @@ document.getElementById("saveButton").addEventListener("click", async () => {
   }
   siteInput.setCustomValidity("");
 
-  if (!password.trim() || password === "Click generate to start") {
-    alert("Generate a password before saving.");
+  if (!hasGeneratedPassword() || !password.trim()) {
+    setVaultStatus("Generate a password before saving.");
     return;
   }
 
   const result = await window.electronAPI.saveEntry({ site, username, password, notes, category, favorite });
   if (!result.success) {
     showDuplicateSiteError(siteInput, result.error);
-    vaultStatus.textContent = result.error;
+    setVaultStatus(result.error);
     return;
   }
 
@@ -445,9 +524,14 @@ document.getElementById("saveButton").addEventListener("click", async () => {
   document.getElementById("username").value = "";
   document.getElementById("notes").value = "";
   document.getElementById("favorite").checked = false;
-  vaultStatus.textContent = "Entry saved to the encrypted vault.";
-  await refreshEntries();
-});
+  setOutput("");
+  setVaultStatus("Entry saved to the encrypted vault.");
+  try {
+    await refreshEntries();
+  } catch (error) {
+    setVaultStatus(error.message);
+  }
+}
 
 siteInput.addEventListener("input", () => siteInput.setCustomValidity(""));
 searchInput.addEventListener("input", () => {
