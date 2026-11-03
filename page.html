@@ -39,7 +39,7 @@
     background: var(--canvas);
     color: var(--text);
     font: 14px/1.5 var(--font-sans);
-    padding: 22px 18px 72px;
+    padding: 58px 18px 72px;
   }
   button, input, select, textarea { font: inherit; }
   button { color: inherit; }
@@ -47,6 +47,21 @@
     outline: 2px solid var(--focus);
     outline-offset: 2px;
   }
+  .titlebar { position: fixed; top: 0; left: 0; right: 0; z-index: 20; display: flex; align-items: center; gap: 4px; height: env(titlebar-area-height, 36px); padding: 0 calc(100vw - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100vw) + 8px) 0 calc(env(titlebar-area-x, 0px) + 10px); background: var(--surface); box-shadow: 0 1px 0 var(--border); user-select: none; -webkit-app-region: drag; }
+  .titlebar-brand { display: inline-flex; align-items: center; gap: 8px; margin-right: 10px; color: var(--text); font-size: 11px; font-weight: 600; letter-spacing: .16em; }
+  .brand-mark { width: 10px; height: 10px; border-radius: 3px; background: linear-gradient(135deg, var(--accent), var(--blue)); box-shadow: 0 0 10px #9b7bff66; }
+  .menubar { display: flex; gap: 2px; }
+  .platform-darwin .menubar { display: none; }
+  .menu { position: relative; }
+  .titlebar button { min-height: 26px; padding: 3px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 500; -webkit-app-region: no-drag; }
+  .titlebar button:hover:not(:disabled), .titlebar .menu-trigger[aria-expanded="true"] { border-color: #322d5b; background: var(--accent-deep); color: var(--text); }
+  .titlebar button:active:not(:disabled) { transform: none; }
+  .menu-list { position: absolute; top: calc(100% + 6px); left: 0; display: grid; min-width: 210px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: var(--raised); box-shadow: 0 14px 34px #02020acc; -webkit-app-region: no-drag; }
+  .menu-list[hidden] { display: none; }
+  .titlebar .menu-list button { display: flex; align-items: center; justify-content: space-between; gap: 28px; width: 100%; color: var(--text); text-align: left; }
+  .titlebar .menu-list button:hover:not(:disabled), .titlebar .menu-list button:focus-visible { border-color: transparent; background: var(--accent-deep); outline: none; }
+  .menu-list kbd { color: var(--muted); font: 11px var(--font-sans); }
+  .menu-sep { height: 1px; margin: 4px 2px; background: var(--divider); }
   .app-shell { position: relative; z-index: 1; width: 100%; max-width: 520px; margin: 0 auto; }
   .wall-art { position: fixed; inset: 0; z-index: 0; display: grid; place-items: center; overflow: hidden; background: radial-gradient(ellipse at 50% 50%, #0a0a18aa 0%, #05050baa 58%, #05050bf2 100%); pointer-events: none; }
   .wall-art pre { margin: 0; color: #8c7de1; font: clamp(16px, 3.2vh, 25px)/1.14 ui-monospace, "Cascadia Code", Consolas, monospace; opacity: .3; text-shadow: 0 0 12px #6955c433; white-space: pre; }
@@ -125,7 +140,7 @@
   .category-row .favorite-row { margin-bottom: 24px; }
   .security-note { margin: 12px 0 0; color: var(--muted); font-size: 10px; line-height: 1.45; }
   @media (max-width: 520px) {
-    body { padding: 12px 10px 25px; }
+    body { padding: 48px 10px 72px; }
     .panel { padding: 16px; }
     .field-grid { grid-template-columns: 1fr; gap: 0; }
     .category-row .favorite-row { margin-bottom: 15px; }
@@ -136,6 +151,42 @@
 </style>
 </head>
 <body>
+  <header class="titlebar">
+    <span class="titlebar-brand"><span class="brand-mark" aria-hidden="true"></span>VLAUTR</span>
+    <nav class="menubar" aria-label="Application menu">
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="fileMenu">File</button>
+        <div class="menu-list" id="fileMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="lock">Lock vault</button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="minimize">Minimize</button>
+          <button type="button" role="menuitem" data-action="quit">Quit <kbd>Alt+F4</kbd></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="editMenu">Edit</button>
+        <div class="menu-list" id="editMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="undo">Undo <kbd>Ctrl+Z</kbd></button>
+          <button type="button" role="menuitem" data-action="redo">Redo <kbd>Ctrl+Y</kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="cut">Cut <kbd>Ctrl+X</kbd></button>
+          <button type="button" role="menuitem" data-action="copy">Copy <kbd>Ctrl+C</kbd></button>
+          <button type="button" role="menuitem" data-action="paste">Paste <kbd>Ctrl+V</kbd></button>
+          <button type="button" role="menuitem" data-action="selectAll">Select all <kbd>Ctrl+A</kbd></button>
+        </div>
+      </div>
+      <div class="menu">
+        <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="viewMenu">View</button>
+        <div class="menu-list" id="viewMenu" role="menu" hidden>
+          <button type="button" role="menuitem" data-action="zoomIn">Zoom in <kbd>Ctrl+Shift+=</kbd></button>
+          <button type="button" role="menuitem" data-action="zoomOut">Zoom out <kbd>Ctrl+-</kbd></button>
+          <button type="button" role="menuitem" data-action="resetZoom">Actual size <kbd>Ctrl+0</kbd></button>
+          <div class="menu-sep" role="separator"></div>
+          <button type="button" role="menuitem" data-action="toggleFullScreen">Full screen <kbd>F11</kbd></button>
+        </div>
+      </div>
+    </nav>
+  </header>
   <div class="wall-art" aria-hidden="true"><pre>░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
 ░▒▓█▓▒░░▒▓█▓▒░▒▓█▓▒░
  ░▒▓█▓▒▒▓█▓▒░░▒▓█▓▒░

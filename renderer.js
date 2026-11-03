@@ -540,4 +540,85 @@ searchInput.addEventListener("input", () => {
 });
 categoryFilter.addEventListener("change", renderEntries);
 favoriteFilter.addEventListener("change", renderEntries);
+
+const menuTriggers = [...document.querySelectorAll(".menu-trigger")];
+const lockMenuItem = document.querySelector('[data-action="lock"]');
+
+function menuListFor(trigger) {
+  return document.getElementById(trigger.getAttribute("aria-controls"));
+}
+
+function closeMenus() {
+  menuTriggers.forEach((trigger) => {
+    trigger.setAttribute("aria-expanded", "false");
+    menuListFor(trigger).hidden = true;
+  });
+}
+
+function openMenu(trigger, focusFirst = false) {
+  closeMenus();
+  lockMenuItem.disabled = vaultPanel.classList.contains("hidden");
+  trigger.setAttribute("aria-expanded", "true");
+  const list = menuListFor(trigger);
+  list.hidden = false;
+  if (focusFirst) list.querySelector("button:not(:disabled)")?.focus();
+}
+
+function openMenuTrigger() {
+  return menuTriggers.find((trigger) => trigger.getAttribute("aria-expanded") === "true");
+}
+
+document.body.classList.add(`platform-${window.electronAPI.platform}`);
+
+// Keep focus in the page's text fields so Edit actions apply to them.
+document.querySelector(".titlebar").addEventListener("mousedown", (event) => {
+  if (event.target.closest("button")) event.preventDefault();
+});
+
+menuTriggers.forEach((trigger, index) => {
+  trigger.addEventListener("click", (event) => {
+    if (trigger.getAttribute("aria-expanded") === "true") closeMenus();
+    else openMenu(trigger, event.detail === 0);
+  });
+  trigger.addEventListener("mouseenter", () => {
+    const openTrigger = openMenuTrigger();
+    if (openTrigger && openTrigger !== trigger) openMenu(trigger);
+  });
+  menuListFor(trigger).addEventListener("keydown", (event) => {
+    const items = [...menuListFor(trigger).querySelectorAll("button:not(:disabled)")];
+    const position = items.indexOf(document.activeElement);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const step = event.key === "ArrowDown" ? 1 : -1;
+      items[(position + step + items.length) % items.length]?.focus();
+    } else if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+      event.preventDefault();
+      const step = event.key === "ArrowRight" ? 1 : -1;
+      openMenu(menuTriggers[(index + step + menuTriggers.length) % menuTriggers.length], true);
+    }
+  });
+});
+
+document.querySelectorAll(".menu-list [data-action]").forEach((item) => {
+  item.addEventListener("click", async () => {
+    const { action } = item.dataset;
+    closeMenus();
+    if (action === "lock") {
+      if (!vaultPanel.classList.contains("hidden")) document.getElementById("lockBtn").click();
+      return;
+    }
+    await window.electronAPI.menuAction(action);
+  });
+});
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest(".menu")) closeMenus();
+});
+document.addEventListener("keydown", (event) => {
+  const trigger = openMenuTrigger();
+  if (event.key !== "Escape" || !trigger) return;
+  closeMenus();
+  trigger.focus();
+});
+window.addEventListener("blur", closeMenus);
 initializeUnlockForm();
