@@ -241,6 +241,7 @@ function createWindow() {
     width: 520,
     height: 760,
     title: 'VLAUTR',
+    icon: path.join(__dirname, 'build', 'icon.ico'),
     backgroundColor: '#05050b',
     titleBarStyle: 'hidden',
     titleBarOverlay: process.platform === 'darwin' ? true : { color: '#0b0b16', symbolColor: '#c9c3ff', height: TITLE_BAR_HEIGHT },

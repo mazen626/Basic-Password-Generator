@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="build/icon.png" alt="VLAUTR icon" width="128">
+</p>
+
 # VLAUTR
 
 **A local-first password generator and encrypted password vault for Windows.**
@@ -57,6 +61,8 @@ VLAUTR keeps your credentials on your own machine. Everything is encrypted with 
 
 The clipboard is shared with other apps and with Windows clipboard history, so treat copying as a convenience, not secure storage.
 
+See [docs/SECURITY.md](docs/SECURITY.md) for the full threat model and known gaps.
+
 ## Getting started
 
 ### Requirements
@@ -87,11 +93,11 @@ The portable `.exe` is written to the `dist` folder.
 npm test
 ```
 
-Tests use Node's built-in test runner.
+Tests use Node's built-in test runner and cover the vault lifecycle, migration, and recovery from damaged or interrupted writes. See [docs/PHASE-0-BASELINE.md](docs/PHASE-0-BASELINE.md) for coverage, packaging checks, and performance numbers.
 
 ## Where your data lives
 
-The vault is stored as `vault.json` in Electron's user-data folder (under `%APPDATA%`). Backups are saved next to it:
+The vault is stored at `%APPDATA%\my-projects\vault.json`. Both `npm start` and the portable build use this same file. Backups are saved next to it:
 
 - `vault-backup-<timestamp>-<id>.bak`: backups you create from the unlock screen.
 - `vault.json.v1-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.

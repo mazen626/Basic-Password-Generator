@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<style>
+  @font-face { font-family: "IBM Plex Sans"; font-weight: 700; src: url("FONT_URL") format("woff2"); }
+  html, body { margin: 0; width: 1024px; height: 1024px; background: transparent; overflow: hidden; }
+  .mark {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    font: 700 840px/1 "IBM Plex Sans", sans-serif; letter-spacing: -0.06em;
+  }
+  .mark span {
+    display: inline-block; padding: 0 0.058em 0 0.02em;
+    /* Mid-tone purples so the letters stay readable on both light and dark taskbars. */
+    background: linear-gradient(165deg, #b49cff 0%, #8a6bff 45%, #536dfe 100%);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    /* Optical centering: the V is heavy at the top and the L at the bottom left,
+       so the letters look high and left when their bounding box is centered. */
+    transform: translate(11px, -29px);
+  }
+</style>
+</head>
+<body>
+  <div class="mark"><span>VL</span></div>
+</body>
+</html>
