@@ -1,16 +1,17 @@
 {
   "name": "my-projects",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "VLAUTR: local-first password generator and encrypted password vault",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "test": "node --test",
     "dist": "electron-builder",
+    "dist:setup": "electron-builder --win nsis",
     "icon": "electron scripts/render-icon.js"
   },
   "keywords": [],
-  "author": "",
+  "author": "VLAUTR",
   "license": "ISC",
   "type": "commonjs",
   "devDependencies": {
@@ -20,6 +21,7 @@
   "build": {
     "appId": "com.mazen.passwordgenerator",
     "productName": "VLAUTR",
+    "publish": null,
     "directories": {
       "output": "dist"
     },
@@ -35,9 +37,22 @@
     ],
     "win": {
       "target": [
+        "nsis",
         "portable"
       ],
       "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "VLAUTR",
+      "uninstallDisplayName": "VLAUTR",
+      "deleteAppDataOnUninstall": false,
+      "differentialPackage": false
     }
   },
   "dependencies": {

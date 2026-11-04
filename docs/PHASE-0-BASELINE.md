@@ -34,7 +34,7 @@ Verified by launching the packaged build: it found the existing development vaul
 
 `build.productName` in `package.json` only sets the executable and product names. electron-builder does not copy it into the packaged `package.json`, so it does not move the vault. It was renamed from `PasswordGenerator` to `VLAUTR` after this baseline; the measurements here were taken under the old name.
 
-The portable build stores data in `%APPDATA%`, not next to the `.exe`.
+The portable build stores data in `%APPDATA%`, not next to the `.exe`. The installer build added after this baseline uses the same folder, and its uninstaller leaves that folder in place (`nsis.deleteAppDataOnUninstall` is `false`).
 
 ## Startup and unlock timings
 
