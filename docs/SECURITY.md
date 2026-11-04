@@ -21,7 +21,7 @@ This document describes how VLAUTR protects vault data today: what it guarantees
 
 A wrong master password and a modified ciphertext both fail GCM authentication. They produce the same error on purpose: "Incorrect master password or vault data is corrupted."
 
-### Vault file format (version 2)
+### Vault file format (version 3)
 
 ```json
 {
@@ -36,7 +36,9 @@ A wrong master password and a modified ciphertext both fail GCM authentication. 
 }
 ```
 
-Each decrypted entry must have exactly these keys: `id` (UUID), `site`, `username`, `password`, `notes`, `category`, `favorite`, `createdAt`, `updatedAt`. Adding or removing a field requires a new format version and a migration. Version 1 vaults are migrated on unlock, after an automatic backup.
+Each decrypted entry must have exactly these keys: `id` (UUID), `site`, `username`, `password`, `notes`, `category`, `favorite`, `backupCodes`, `createdAt`, `updatedAt`. `backupCodes` is a list of up to 50 `{ id, code, used }` objects, each code 1 to 128 characters, and is encrypted with the rest of the entry. Adding or removing a field requires a new format version and a migration. Version 1 vaults are migrated on unlock, after an automatic backup.
+
+Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy of the old file is saved as `vault.json.v<version>-<timestamp>-<id>.bak`. Upgrading is one-way: older app builds report a version 3 vault as corrupted. To go back, restore that backup by hand; anything changed after the upgrade is not in it.
 
 ## Process boundaries
 
@@ -76,7 +78,7 @@ Each decrypted entry must have exactly these keys: `id` (UUID), `site`, `usernam
 
 ## Known gaps (planned for Phase 1)
 
-1. **Plaintext in the renderer.** `vault:load-entries` returns every decrypted password to the renderer, which keeps them in memory (`savedEntries`) until lock. "Hide" only affects what's displayed.
+1. **Plaintext in the renderer.** `vault:load-entries` returns every decrypted password and backup code to the renderer, which keeps them in memory (`savedEntries`) until lock. "Hide" only affects what's displayed.
 2. **Copy takes plaintext.** `vault:copy-password` receives the password from the renderer instead of an entry ID.
 3. **Master password in IPC.** The master password crosses IPC as a JavaScript string, which can't be zeroed. Only the derived key buffer is zeroed.
 4. **Write durability.** The temp-file-and-rename write does not `fsync` before renaming, so a power loss can still produce a truncated file. Phase 0 tests confirm that a truncated file is detected and never overwritten, but recovery is manual (restore a backup).

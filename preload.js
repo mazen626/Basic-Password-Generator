@@ -13,6 +13,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyPassword: (password, token) => ipcRenderer.invoke('vault:copy-password', password, token),
   saveEntry: (entry) => ipcRenderer.invoke('vault:save-entry', entry),
   updateEntry: (id, entry) => ipcRenderer.invoke('vault:update-entry', id, entry),
+  setBackupCodeUsed: (entryId, codeId, used) => ipcRenderer.invoke('vault:set-backup-code-used', entryId, codeId, used),
   deleteEntry: (id) => ipcRenderer.invoke('vault:delete-entry', id),
   loadEntries: () => ipcRenderer.invoke('vault:load-entries'),
   onAutoLock: (callback) => {
