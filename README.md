@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="build/icon.png" alt="VLAUTR icon" width="128">
+</p>
+
 # VLAUTR
 
 **A local-first password generator and encrypted password vault for Windows.**

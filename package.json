@@ -1,6 +1,6 @@
 {
   "name": "my-projects",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "VLAUTR: local-first password generator and encrypted password vault",
   "main": "main.js",
   "scripts": {
@@ -19,7 +19,7 @@
   },
   "build": {
     "appId": "com.mazen.passwordgenerator",
-    "productName": "PasswordGenerator",
+    "productName": "VLAUTR",
     "directories": {
       "output": "dist"
     },

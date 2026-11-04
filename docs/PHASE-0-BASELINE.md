@@ -10,7 +10,7 @@ Results of the Phase 0 stabilization pass (2026-11-03). Use these numbers and fi
 
 | Output | Size |
 | --- | --- |
-| `dist/PasswordGenerator 1.0.0.exe` (portable) | 103.7 MB |
+| `dist/VLAUTR <version>.exe` (portable) | 103.7 MB |
 | `dist/win-unpacked/resources/app.asar` | 4.2 MB |
 
 **Fixed in Phase 0:** `build.files` was `**/*`, which packed `.claude/`, `.superdesign/`, `test/`, and other non-app files into the build. It now lists the app files explicitly. The package contains `main.js`, `preload.js`, `renderer.js`, `page.html`, `vault.js`, and `package.json`, plus the production dependencies `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`. `app.asar` shrank from 6.7 MB to 4.2 MB.
@@ -26,11 +26,13 @@ Results of the Phase 0 stabilization pass (2026-11-03). Use these numbers and fi
 | Build | App name | Vault file |
 | --- | --- | --- |
 | Development (`npm start`) | `my-projects` (from `package.json` `name`) | `%APPDATA%\my-projects\vault.json` |
-| Packaged (`PasswordGenerator 1.0.0.exe`) | `my-projects` (the packaged `package.json` has no `productName`) | `%APPDATA%\my-projects\vault.json` |
+| Packaged (`VLAUTR <version>.exe`) | `my-projects` (the packaged `package.json` has no `productName`) | `%APPDATA%\my-projects\vault.json` |
 
 Verified by launching the packaged build: it found the existing development vault, and no `PasswordGenerator` or `VLAUTR` folder was created in `%APPDATA%`. **Both builds share one vault.**
 
 > **Warning:** changing `name` in `package.json`, or adding a top-level `productName`, moves the vault folder. Users would see an empty "Create vault" screen. Any rename must migrate or locate the old folder first.
+
+`build.productName` in `package.json` only sets the executable and product names. electron-builder does not copy it into the packaged `package.json`, so it does not move the vault. It was renamed from `PasswordGenerator` to `VLAUTR` after this baseline; the measurements here were taken under the old name.
 
 The portable build stores data in `%APPDATA%`, not next to the `.exe`.
 
