@@ -14,7 +14,7 @@ test('creating a vault writes an encrypted v2 envelope and unlocks it', async (t
 
   const envelope = JSON.parse(await fs.readFile(vaultPath, 'utf8'));
   assert.deepEqual(Object.keys(envelope).sort(), ['cipher', 'ciphertext', 'iterations', 'iv', 'kdf', 'salt', 'tag', 'version']);
-  assert.equal(envelope.version, 2);
+  assert.equal(envelope.version, 3);
   assert.equal(envelope.kdf, 'pbkdf2-sha256');
   assert.equal(envelope.iterations, 600000);
   assert.equal(envelope.cipher, 'aes-256-gcm');

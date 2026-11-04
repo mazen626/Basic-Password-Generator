@@ -25,7 +25,7 @@ function createLegacyEnvelope(entries, masterPassword) {
   };
 }
 
-test('v1 unlock preserves metadata and backs up the original vault before v2 rewrite', async (t) => {
+test('v1 unlock preserves metadata and backs up the original vault before rewrite', async (t) => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'password-vault-'));
   t.after(() => fs.rm(directory, { recursive: true, force: true }));
 
@@ -53,8 +53,8 @@ test('v1 unlock preserves metadata and backs up the original vault before v2 rew
   const backupName = (await fs.readdir(directory)).find((name) => name.endsWith('.bak'));
 
   assert.deepEqual(result, { created: false, migrated: true });
-  assert.equal(rewritten.version, 2);
-  assert.deepEqual(entries[0], originalEntry);
+  assert.equal(rewritten.version, 3);
+  assert.deepEqual(entries[0], { ...originalEntry, backupCodes: [] });
   assert.equal(entries[1].site, oldEntry.site);
   assert.equal(entries[1].password, oldEntry.password);
   assert.equal(entries[1].username, '');

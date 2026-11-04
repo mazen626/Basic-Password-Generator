@@ -42,7 +42,7 @@ test('unsupported formats and invalid envelope fields are reported as corrupted'
   const { vaultPath } = await createSavedVault(t);
   const envelope = JSON.parse(await fs.readFile(vaultPath, 'utf8'));
   const variants = [
-    { ...envelope, version: 3 },
+    { ...envelope, version: 4 },
     { ...envelope, kdf: 'scrypt' },
     { ...envelope, cipher: 'aes-256-cbc' },
     { ...envelope, iterations: 1000 },

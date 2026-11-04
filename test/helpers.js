@@ -28,6 +28,7 @@ function makeEntry(overrides = {}) {
     notes: '',
     category: 'login',
     favorite: false,
+    backupCodes: [],
     ...overrides
   };
 }

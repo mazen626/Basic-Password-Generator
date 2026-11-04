@@ -1,6 +1,6 @@
 {
   "name": "my-projects",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "VLAUTR: local-first password generator and encrypted password vault",
   "main": "main.js",
   "scripts": {
@@ -27,6 +27,7 @@
       "main.js",
       "preload.js",
       "renderer.js",
+      "backup-codes.js",
       "page.html",
       "vault.js",
       "package.json",

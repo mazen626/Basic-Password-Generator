@@ -133,6 +133,18 @@
   #entriesList form .field input:not([type="checkbox"]), #entriesList form .field select, #entriesList form .field textarea { padding: 8px 10px; font-size: 12px; }
   #entriesList form .entry-actions { margin-top: 4px; }
   #entriesList form .check { margin: 2px 0; }
+  .backup-code-input textarea { font: 12px/1.5 var(--font-mono); }
+  .backup-code-summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; color: var(--muted); font-size: 11px; }
+  .backup-code-problem { color: #ff9ead; font-size: 11px; }
+  .backup-code-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(135px, 1fr)); gap: 6px; margin: 0; padding: 0; list-style: none; }
+  .backup-code-grid li { display: flex; align-items: center; gap: 7px; min-width: 0; padding: 5px 7px; border: 1px solid #292744; border-radius: 7px; background: #080912; }
+  .backup-code-grid .check { flex: 1; min-width: 0; color: #d9d3ff; font: 11px/1.4 var(--font-mono); }
+  .backup-code-value { flex: 1; min-width: 0; color: #d9d3ff; font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .backup-code-used { color: var(--muted); text-decoration: line-through; }
+  .backup-code-tag { color: var(--muted); font-size: 10px; }
+  .backup-code-grid button { flex: none; width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 5px; font-size: 12px; line-height: 1; }
+  .entry-codes { display: grid; gap: 8px; margin: 0 0 10px; }
+  .entry-codes .backup-code-summary button { flex: none; min-height: 28px; padding: 4px 9px; font-size: 11px; }
   .danger-button { border-color: #633343; color: #ff9ead; }
   .danger-button:hover:not(:disabled) { border-color: var(--danger); background: #2a1420; }
   .vault-section { margin-top: 25px; padding-top: 21px; border-top: 1px solid var(--divider); }
@@ -313,6 +325,7 @@
           <label for="notes">Notes</label>
           <textarea id="notes" maxlength="4000" placeholder="Optional details"></textarea>
         </div>
+        <div id="backupCodesField"></div>
         <button id="saveButton" type="button">Save to vault</button>
       </section>
 
@@ -340,6 +353,7 @@
     </section>
   </main>
   <p id="vaultStatus" role="status" aria-live="polite"></p>
+<script src="./backup-codes.js"></script>
 <script src="./renderer.js"></script>
 </body>
 </html>

@@ -36,6 +36,8 @@ let savedEntries = [];
 let searchTimer;
 let statusTimer;
 let editorCount = 0;
+const newEntryCodes = createBackupCodeInput("new");
+document.getElementById("backupCodesField").append(newEntryCodes.element);
 
 function getRequiredCharacterSets() {
   const sets = [];
@@ -250,8 +252,157 @@ function renderEntry(entry) {
     actions.append(makeButton("Edit", () => renderEntryEditor(savedEntry, item)), deleteButton);
   }
 
-  item.append(header, password, actions);
+  const codes = renderEntryCodes(savedEntry);
+  item.append(header, password);
+  if (codes) item.append(codes);
+  item.append(actions);
   return item;
+}
+
+function createBackupCodeInput(idPrefix, existingCodes = []) {
+  const element = document.createElement("div");
+  const label = document.createElement("label");
+  const textarea = document.createElement("textarea");
+  const splitLabel = document.createElement("label");
+  const splitOnSpaces = document.createElement("input");
+  const summary = document.createElement("small");
+  const problem = document.createElement("small");
+  const preview = document.createElement("ul");
+  let keptCodes = existingCodes.map(({ code, used }) => ({ code, used }));
+
+  function getNewCodes() {
+    const kept = new Set(keptCodes.map(({ code }) => code));
+    return parseBackupCodes(textarea.value, { splitOnSpaces: splitOnSpaces.checked }).filter((code) => !kept.has(code));
+  }
+
+  function getCodes() {
+    return [...keptCodes.map(({ code }) => code), ...getNewCodes()];
+  }
+
+  function getProblem() {
+    return findBackupCodeProblem(getCodes());
+  }
+
+  function makePreviewItem(code, used, position, onRemove) {
+    const item = document.createElement("li");
+    const value = document.createElement("span");
+    const removeButton = makeButton("×", onRemove);
+    value.className = used ? "backup-code-value backup-code-used" : "backup-code-value";
+    value.textContent = code;
+    removeButton.setAttribute("aria-label", `Remove code ${position}`);
+    item.append(value);
+    if (used) {
+      const tag = document.createElement("span");
+      tag.className = "backup-code-tag";
+      tag.textContent = "used";
+      item.append(tag);
+    }
+    item.append(removeButton);
+    return item;
+  }
+
+  function render() {
+    const newCodes = getNewCodes();
+    const total = keptCodes.length + newCodes.length;
+    summary.textContent = total ? `${total} code${total === 1 ? "" : "s"}` : "";
+    problem.textContent = getProblem();
+    preview.replaceChildren(
+      ...keptCodes.map(({ code, used }, index) => makePreviewItem(code, used, index + 1, () => {
+        keptCodes = keptCodes.filter((kept) => kept.code !== code);
+        render();
+      })),
+      ...newCodes.map((code, index) => makePreviewItem(code, false, keptCodes.length + index + 1, () => {
+        textarea.value = newCodes.filter((newCode) => newCode !== code).join("\n");
+        render();
+      }))
+    );
+  }
+
+  function reset() {
+    textarea.value = "";
+    splitOnSpaces.checked = true;
+    keptCodes = [];
+    render();
+  }
+
+  element.className = "field backup-code-input";
+  textarea.id = `${idPrefix}-backup-codes`;
+  textarea.placeholder = "Paste your backup codes";
+  textarea.maxLength = 20000;
+  textarea.spellcheck = false;
+  textarea.autocomplete = "off";
+  textarea.addEventListener("input", render);
+  label.htmlFor = textarea.id;
+  label.textContent = "Backup codes";
+  splitOnSpaces.type = "checkbox";
+  splitOnSpaces.checked = true;
+  splitOnSpaces.addEventListener("change", render);
+  splitLabel.className = "check";
+  splitLabel.append(splitOnSpaces, document.createTextNode(" Split on spaces"));
+  problem.className = "backup-code-problem";
+  preview.className = "backup-code-grid";
+  element.append(label, textarea, splitLabel, summary, problem, preview);
+  render();
+  return { element, getCodes, getProblem, reset };
+}
+
+function renderEntryCodes(savedEntry) {
+  const codes = Array.isArray(savedEntry.backupCodes) ? savedEntry.backupCodes : [];
+  if (codes.length === 0 || typeof savedEntry.id !== "string") return null;
+
+  const section = document.createElement("div");
+  const heading = document.createElement("div");
+  const summary = document.createElement("span");
+  const list = document.createElement("ul");
+  let shown = false;
+
+  function updateSummary() {
+    const unused = codes.filter((code) => !code.used).length;
+    summary.textContent = `Backup codes: ${unused} of ${codes.length} unused`;
+  }
+
+  function renderCode(code) {
+    const item = document.createElement("li");
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    const value = document.createElement("span");
+    label.className = "check";
+    checkbox.type = "checkbox";
+    checkbox.checked = code.used;
+    value.textContent = code.code;
+    value.classList.toggle("backup-code-used", code.used);
+    checkbox.addEventListener("change", async () => {
+      checkbox.disabled = true;
+      const result = await window.electronAPI.setBackupCodeUsed(savedEntry.id, code.id, checkbox.checked);
+      checkbox.disabled = false;
+      if (!result.success) {
+        checkbox.checked = code.used;
+        setVaultStatus(result.error);
+        return;
+      }
+      code.used = checkbox.checked;
+      value.classList.toggle("backup-code-used", code.used);
+      updateSummary();
+    });
+    label.append(checkbox, value);
+    item.append(label);
+    return item;
+  }
+
+  const toggleButton = makeButton("Show codes", () => {
+    shown = !shown;
+    list.replaceChildren(...(shown ? codes.map(renderCode) : []));
+    list.hidden = !shown;
+    toggleButton.textContent = shown ? "Hide codes" : "Show codes";
+  });
+  section.className = "entry-codes";
+  heading.className = "backup-code-summary";
+  list.className = "backup-code-grid";
+  list.hidden = true;
+  heading.append(summary, toggleButton);
+  section.append(heading, list);
+  updateSummary();
+  return section;
 }
 
 function renderEntryEditor(entry, item) {
@@ -275,6 +426,7 @@ function renderEntryEditor(entry, item) {
   const password = document.createElement("input");
   const actions = document.createElement("div");
   const idPrefix = `edit-${++editorCount}`;
+  const backupCodes = createBackupCodeInput(idPrefix, Array.isArray(entry.backupCodes) ? entry.backupCodes : []);
 
   [[siteLabel, site, "site"], [usernameLabel, username, "username"], [passwordLabel, password, "password"], [notesLabel, notes, "notes"], [categoryLabel, category, "category"]]
     .forEach(([label, control, name]) => {
@@ -321,13 +473,19 @@ function renderEntryEditor(entry, item) {
   categoryField.append(categoryLabel, category);
   passwordField.append(passwordLabel, password);
   const saveChangesButton = makeButton("Save changes", () => withDisabled(saveChangesButton, async () => {
+      const codeProblem = backupCodes.getProblem();
+      if (codeProblem) {
+        setVaultStatus(codeProblem);
+        return;
+      }
       const result = await window.electronAPI.updateEntry(entry.id, {
         site: site.value.trim(),
         username: username.value,
         password: password.value,
         notes: notes.value,
         category: category.value,
-        favorite: favorite.checked
+        favorite: favorite.checked,
+        backupCodes: backupCodes.getCodes()
       });
       if (!result.success) {
         showDuplicateSiteError(site, result.error);
@@ -344,7 +502,7 @@ function renderEntryEditor(entry, item) {
   saveChangesButton.className = "primary-button";
   actions.append(saveChangesButton, makeButton("Cancel", () => item.replaceWith(renderEntry(entry))));
   form.addEventListener("submit", (event) => event.preventDefault());
-  form.append(siteField, usernameField, passwordField, notesField, categoryField, favoriteField, actions);
+  form.append(siteField, usernameField, passwordField, notesField, backupCodes.element, categoryField, favoriteField, actions);
   item.replaceChildren(form);
   site.focus();
 }
@@ -382,6 +540,7 @@ function clearUnlockedView(message) {
   siteInput.setCustomValidity("");
   document.getElementById("username").value = "";
   document.getElementById("notes").value = "";
+  newEntryCodes.reset();
   document.getElementById("category").value = "login";
   document.getElementById("favorite").checked = false;
   unlockPanel.classList.remove("hidden");
@@ -513,7 +672,14 @@ async function saveNewEntry() {
     return;
   }
 
-  const result = await window.electronAPI.saveEntry({ site, username, password, notes, category, favorite });
+  const codeProblem = newEntryCodes.getProblem();
+  if (codeProblem) {
+    setVaultStatus(codeProblem);
+    return;
+  }
+
+  const backupCodes = newEntryCodes.getCodes();
+  const result = await window.electronAPI.saveEntry({ site, username, password, notes, category, favorite, backupCodes });
   if (!result.success) {
     showDuplicateSiteError(siteInput, result.error);
     setVaultStatus(result.error);
@@ -523,6 +689,7 @@ async function saveNewEntry() {
   siteInput.value = "";
   document.getElementById("username").value = "";
   document.getElementById("notes").value = "";
+  newEntryCodes.reset();
   document.getElementById("favorite").checked = false;
   setOutput("");
   setVaultStatus("Entry saved to the encrypted vault.");

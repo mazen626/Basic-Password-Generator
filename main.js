@@ -224,6 +224,12 @@ registerVaultHandler('vault:update-entry', async (id, entry) => {
   return { success: true };
 });
 
+registerVaultHandler('vault:set-backup-code-used', async (entryId, codeId, used) => {
+  await vault.setBackupCodeUsed(entryId, codeId, used);
+  armIdleLock();
+  return { success: true };
+});
+
 registerVaultHandler('vault:delete-entry', async (id) => {
   await vault.deleteEntry(id);
   armIdleLock();
