@@ -35,6 +35,7 @@ VLAUTR keeps your credentials on your own machine. Everything is encrypted with 
 **Encrypted vault**
 - Create a vault protected by a master password (8 to 1024 characters).
 - Store site, username, password, notes, category, and favorite status for each entry.
+- Paste an entry's backup codes in any layout. Each code gets its own checkbox, so you can track which ones are used.
 - Edit and delete entries; duplicate sites are rejected.
 - Search across sites, usernames, notes, and categories, and filter by category or favorites. Favorites are listed first.
 
@@ -79,13 +80,20 @@ npm start
 
 Only one copy of the app can run at a time. Starting it again brings the open window to the front.
 
-### Build a portable Windows executable
+### Build for release
 
 ```sh
 npm run dist
 ```
 
-The portable `.exe` is written to the `dist` folder.
+This writes two files to the `dist` folder:
+
+- `VLAUTR Setup <version>.exe`: an installer that adds VLAUTR to your user account, with Start menu and desktop shortcuts and an uninstaller. It doesn't need administrator rights.
+- `VLAUTR <version>.exe`: a portable build that runs without installing.
+
+To build only the installer, run `npm run dist:setup`.
+
+Both are unsigned for now, so Windows SmartScreen may warn you before the first run.
 
 ### Run the tests
 
@@ -97,10 +105,10 @@ Tests use Node's built-in test runner and cover the vault lifecycle, migration, 
 
 ## Where your data lives
 
-The vault is stored at `%APPDATA%\my-projects\vault.json`. Both `npm start` and the portable build use this same file. Backups are saved next to it:
+The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the installed app, and the portable build all use this same file. Uninstalling VLAUTR leaves this folder in place, so your vault and backups are kept. Backups are saved next to it:
 
 - `vault-backup-<timestamp>-<id>.bak`: backups you create from the unlock screen.
-- `vault.json.v1-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
+- `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
 Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
 

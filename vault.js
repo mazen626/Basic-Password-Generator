@@ -4,7 +4,8 @@ const path = require('node:path');
 const { promisify } = require('node:util');
 
 const pbkdf2 = promisify(crypto.pbkdf2);
-const FORMAT_VERSION = 2;
+const FORMAT_VERSION = 3;
+const PREVIOUS_FORMAT_VERSION = 2;
 const LEGACY_FORMAT_VERSION = 1;
 const PBKDF2_ITERATIONS = 600000;
 const SALT_LENGTH = 16;
@@ -16,6 +17,8 @@ const MAX_SITE_LENGTH = 200;
 const MAX_USERNAME_LENGTH = 255;
 const MAX_PASSWORD_LENGTH = 4096;
 const MAX_NOTES_LENGTH = 4000;
+const MAX_BACKUP_CODES = 50;
+const MAX_BACKUP_CODE_LENGTH = 128;
 const MAX_MASTER_PASSWORD_LENGTH = 1024;
 const CATEGORIES = new Set(['login', 'email', 'finance', 'identity', 'work', 'other']);
 
@@ -55,7 +58,7 @@ class PasswordVault {
 
     try {
       const envelope = validateEnvelope(JSON.parse(contents));
-      return { exists: true, legacy: envelope.version === LEGACY_FORMAT_VERSION, corrupted: false };
+      return { exists: true, legacy: envelope.version !== FORMAT_VERSION, corrupted: false };
     } catch {
       return { exists: true, legacy: false, corrupted: true };
     }
@@ -109,12 +112,12 @@ class PasswordVault {
       throw new Error('Incorrect master password or vault data is corrupted.');
     }
 
-    const migrated = envelope.version === LEGACY_FORMAT_VERSION;
+    const migrated = envelope.version !== FORMAT_VERSION;
     if (migrated) {
       try {
         const migratedEntries = migrateEntries(entries);
         validateEntries(migratedEntries);
-        await backupLegacyVault(this.filePath, contents);
+        await backupLegacyVault(this.filePath, contents, envelope.version);
         await this.persistEntries(migratedEntries, candidateKey, envelope);
       } catch (error) {
         candidateKey.fill(0);
@@ -172,6 +175,7 @@ class PasswordVault {
         notes: entry.notes,
         category: entry.category,
         favorite: entry.favorite,
+        backupCodes: entry.backupCodes.map(createBackupCode),
         createdAt: now,
         updatedAt: now
       });
@@ -200,10 +204,28 @@ class PasswordVault {
         notes: entry.notes,
         category: entry.category,
         favorite: entry.favorite,
+        backupCodes: mergeBackupCodes(current.backupCodes, entry.backupCodes),
         createdAt: current.createdAt,
         updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
       };
 
+      await this.persistEntries(entries, key, envelope);
+    });
+  }
+
+  async setBackupCodeUsed(entryId, codeId, used) {
+    validateEntryId(entryId);
+    validateEntryId(codeId);
+    if (typeof used !== 'boolean') throw new Error('Used must be true or false.');
+    return this.runWriteTransaction(async () => {
+      const key = this.requireKey();
+      const { envelope, entries } = await this.readEntriesForWrite(key);
+      const entry = entries.find((savedEntry) => savedEntry.id === entryId);
+      if (!entry) throw new Error('Entry not found.');
+      const code = entry.backupCodes.find((savedCode) => savedCode.id === codeId);
+      if (!code) throw new Error('Backup code not found.');
+
+      code.used = used;
       await this.persistEntries(entries, key, envelope);
     });
   }
@@ -298,7 +320,7 @@ function decryptEntries(envelope, key) {
   try {
     const entries = JSON.parse(plaintext.toString('utf8'));
     if (validated.version === LEGACY_FORMAT_VERSION) validateLegacyEntries(entries);
-    else validateEntries(entries);
+    else validateEntries(entries, validated.version);
     return entries;
   } finally {
     plaintext.fill(0);
@@ -320,14 +342,23 @@ function migrateEntries(entries) {
       notes: entry.notes ?? '',
       category: entry.category ?? 'login',
       favorite: entry.favorite ?? false,
+      backupCodes: [],
       createdAt: entry.createdAt ?? now,
       updatedAt: entry.updatedAt ?? now
     };
   });
 }
 
-async function backupLegacyVault(filePath, contents) {
-  const backupPath = `${filePath}.v1-${Date.now()}-${crypto.randomUUID()}.bak`;
+function createBackupCode(code) {
+  return { id: crypto.randomUUID(), code, used: false };
+}
+
+function mergeBackupCodes(currentCodes, codes) {
+  return codes.map((code) => currentCodes.find((saved) => saved.code === code) ?? createBackupCode(code));
+}
+
+async function backupLegacyVault(filePath, contents, version) {
+  const backupPath = `${filePath}.v${version}-${Date.now()}-${crypto.randomUUID()}.bak`;
   await fs.writeFile(backupPath, contents, { flag: 'wx', mode: 0o600 });
   return backupPath;
 }
@@ -366,7 +397,7 @@ function validateEnvelope(envelope) {
   if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope)) {
     throw new Error('Invalid vault envelope.');
   }
-  if (![LEGACY_FORMAT_VERSION, FORMAT_VERSION].includes(envelope.version) || envelope.kdf !== 'pbkdf2-sha256' || envelope.cipher !== 'aes-256-gcm') {
+  if (![LEGACY_FORMAT_VERSION, PREVIOUS_FORMAT_VERSION, FORMAT_VERSION].includes(envelope.version) || envelope.kdf !== 'pbkdf2-sha256' || envelope.cipher !== 'aes-256-gcm') {
     throw new Error('Unsupported vault format.');
   }
   if (!Number.isInteger(envelope.iterations) || envelope.iterations < 100000 || envelope.iterations > 2000000) {
@@ -405,9 +436,9 @@ function validateMasterPasswordConfirmation(masterPassword, confirmation) {
 }
 
 function validateEntry(entry) {
-  const requiredFields = ['site', 'username', 'password', 'notes', 'category', 'favorite'];
+  const requiredFields = ['site', 'username', 'password', 'notes', 'category', 'favorite', 'backupCodes'];
   if (!entry || typeof entry !== 'object' || Array.isArray(entry) || requiredFields.some((field) => !Object.hasOwn(entry, field))) {
-    throw new Error('Entry must include site, username, password, notes, category, and favorite.');
+    throw new Error('Entry must include site, username, password, notes, category, favorite, and backup codes.');
   }
   if (typeof entry.site !== 'string' || entry.site.trim().length === 0 || entry.site.length > MAX_SITE_LENGTH) {
     throw new Error('Site must contain 1 to 200 characters.');
@@ -427,6 +458,33 @@ function validateEntry(entry) {
   if (typeof entry.favorite !== 'boolean') {
     throw new Error('Favorite must be true or false.');
   }
+  validateBackupCodes(entry.backupCodes);
+}
+
+function validateBackupCodes(codes) {
+  if (!Array.isArray(codes) || codes.length > MAX_BACKUP_CODES) {
+    throw new Error('An entry can have up to 50 backup codes.');
+  }
+  codes.forEach((code) => {
+    if (typeof code !== 'string' || code.length === 0 || code.length > MAX_BACKUP_CODE_LENGTH || code !== code.trim() || /[\x00-\x1f\x7f]/.test(code)) {
+      throw new Error('Each backup code must contain 1 to 128 characters.');
+    }
+  });
+  if (new Set(codes).size !== codes.length) throw new Error('Backup codes must be unique.');
+}
+
+function validateStoredBackupCodes(codes) {
+  if (!Array.isArray(codes)) throw new Error('Invalid backup codes.');
+  const ids = new Set();
+  codes.forEach((code) => {
+    if (!code || typeof code !== 'object' || Array.isArray(code) || Object.keys(code).sort().join(',') !== 'code,id,used') {
+      throw new Error('Invalid backup code fields.');
+    }
+    validateEntryId(code.id);
+    if (typeof code.used !== 'boolean') throw new Error('Invalid backup code state.');
+    if (ids.has(code.id)) throw new Error('Duplicate backup code id.');
+    ids.add(code.id);
+  });
 }
 
 function validateEntryId(id) {
@@ -437,18 +495,22 @@ function isValidEntryId(id) {
   return typeof id === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id);
 }
 
-function validateStoredEntry(entry) {
+function validateStoredEntry(entry, formatVersion) {
   const expectedKeys = ['category', 'createdAt', 'favorite', 'id', 'notes', 'password', 'site', 'updatedAt', 'username'];
+  if (formatVersion === FORMAT_VERSION) expectedKeys.unshift('backupCodes');
   if (!entry || typeof entry !== 'object' || Array.isArray(entry) || Object.keys(entry).sort().join(',') !== expectedKeys.join(',')) {
     throw new Error('Invalid vault entry fields.');
   }
+  const storedCodes = formatVersion === FORMAT_VERSION ? entry.backupCodes : [];
+  validateStoredBackupCodes(storedCodes);
   validateEntry({
     site: entry.site,
     username: entry.username,
     password: entry.password,
     notes: entry.notes,
     category: entry.category,
-    favorite: entry.favorite
+    favorite: entry.favorite,
+    backupCodes: storedCodes.map((storedCode) => storedCode.code)
   });
   validateEntryId(entry.id);
   validateTimestamp(entry.createdAt);
@@ -497,13 +559,13 @@ function validateTimestamp(value) {
   }
 }
 
-function validateEntries(entries) {
+function validateEntries(entries, formatVersion = FORMAT_VERSION) {
   if (!Array.isArray(entries) || entries.length > MAX_ENTRIES) {
     throw new Error('Invalid vault entries.');
   }
   const ids = new Set();
   entries.forEach((entry) => {
-    validateStoredEntry(entry);
+    validateStoredEntry(entry, formatVersion);
     if (ids.has(entry.id)) throw new Error('Duplicate entry id.');
     ids.add(entry.id);
   });
