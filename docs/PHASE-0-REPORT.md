@@ -1,6 +1,6 @@
 # Phase 0 Completion Report
 
-**Status:** ready for review. Phase 0 closes, and Phase 1 can start, once the project owner accepts this report (see [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md)).
+**Status:** accepted by the project owner on 2026-11-08. Phase 0 is closed, and Phase 1 can start (see [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md)).
 
 **Checked against:** `main` at version 1.1.1, on 2026-11-08. Measurements from the original pass are in [PHASE-0-BASELINE.md](PHASE-0-BASELINE.md).
 
@@ -71,6 +71,12 @@ Other open items:
 
 Start Phase 1 with step 1, a threat-model and IPC review. The output should be a written design covering what the window needs to show, and which actions really need a plaintext password or backup code. This changes security boundaries, so `RULES.md` requires the owner to approve the design before implementation starts.
 
-## Decision needed
+## Decision
 
-Accept this report to close Phase 0 and unlock Phase 1, or list the items that must be fixed first.
+Accepted by the project owner on 2026-11-08. Phase 0 is closed.
+
+## After this report
+
+Merged the same day as this report, after it was written:
+
+- **#8 (version 1.1.2):** fixed vaults larger than about 4.3 MB failing to unlock. A base64 check overflowed the stack, so the vault was reported as corrupted. Vaults now open up to the documented 8 MB limit, and `npm test` runs 53 tests.

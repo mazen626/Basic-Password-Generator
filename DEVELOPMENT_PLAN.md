@@ -4,7 +4,7 @@
 
 VLAUTR is an offline-first Windows desktop password manager. Its order of priorities is security and data integrity first, useful vault capabilities second, and visual refinement alongside them. Preserve the dark-purple palette and IBM Plex typography. Core use must work without network access. Optional encrypted synchronization is a later, separately designed capability; no server may receive plaintext vault contents or the master password.
 
-This plan is based on the project technical report and the current Phase 0 results in [`docs/PHASE-0-BASELINE.md`](docs/PHASE-0-BASELINE.md). Phase 0 has already been assigned to the coding agent and is recorded as in progress/assigned. **Do not reassign or restart Phase 0.** The baseline document records completed stabilization checks; the assigned agent should finish any remaining Phase 0 handoff items and report its result. Phase 1 is gated on that handoff being available for review.
+This plan is based on the project technical report and the current Phase 0 results in [`docs/PHASE-0-BASELINE.md`](docs/PHASE-0-BASELINE.md). Phase 0 is complete: the owner accepted its completion report ([`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md)) on 2026-11-08. **Do not reassign or restart Phase 0.** Phase 1 is next.
 
 ## Current baseline and constraints
 
@@ -15,9 +15,9 @@ This plan is based on the project technical report and the current Phase 0 resul
 - Phase 0 baseline reports `npm test`: 27 passing tests; `npm run dist` succeeds; packaged IBM Plex fonts and vault location were verified. See the baseline for recovery behaviors, timings, and current coverage gaps.
 - Important known gaps: all decrypted passwords are sent to the renderer; copy IPC accepts plaintext instead of entry ID; master password change is absent; file replacement lacks fsync durability; backups are not pruned; main/renderer security paths have incomplete automated coverage.
 
-## Phase 0 — Stabilization (already assigned; prerequisite/reference)
+## Phase 0 — Stabilization (complete)
 
-**Status:** Completion report ready for owner review: [`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md). All acceptance items are met; Phase 0 closes when the owner accepts the report.
+**Status:** Complete. All acceptance items are met, and the owner accepted the completion report ([`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md)) on 2026-11-08.
 
 **Original acceptance reference:**
 
@@ -51,7 +51,7 @@ This plan is based on the project technical report and the current Phase 0 resul
 - Existing v1/v2 vaults and current exact entry schema remain readable, with migration tests if format changes are necessary.
 - Security-focused tests and full `npm test` pass. Security docs describe the actual improvement and remaining memory/OS limitations.
 
-**Dependency:** Phase 0 handoff review. This phase contains security-sensitive design choices; obtain user approval of the plan before implementation.
+**Dependency:** Phase 0 handoff review (done; report accepted 2026-11-08). This phase contains security-sensitive design choices; obtain user approval of the plan before implementation.
 
 ## Phase 2 — Vault management
 
@@ -159,8 +159,8 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 
 ## Progress tracking
 
-- Phase 0: **Assigned / in progress**; baseline captured in `docs/PHASE-0-BASELINE.md`; await/review the assigned agent's handoff.
-- Phase 1: **Next**, gated by Phase 0 handoff review and approval of its security design.
+- Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
+- Phase 1: **Next**, gated by approval of its security design.
 - Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.
