@@ -412,11 +412,13 @@ function validateEnvelope(envelope) {
 }
 
 function decodeBase64(value, minimumLength, maximumLength) {
-  if (typeof value !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(value)) {
-    throw new Error('Invalid encoded vault data.');
-  }
+  if (typeof value !== 'string') throw new Error('Invalid encoded vault data.');
 
+  // Buffer.from ignores characters that aren't base64, so only accept input that
+  // re-encodes to exactly the same text. Unlike a regular expression, this has no
+  // stack limit on large vaults.
   const decoded = Buffer.from(value, 'base64');
+  if (decoded.toString('base64') !== value) throw new Error('Invalid encoded vault data.');
   if (decoded.length < minimumLength || decoded.length > maximumLength) {
     throw new Error('Invalid encoded vault data length.');
   }
