@@ -17,7 +17,7 @@ This plan is based on the project technical report and the current Phase 0 resul
 
 ## Phase 0 — Stabilization (already assigned; prerequisite/reference)
 
-**Status:** Assigned to the coding agent; in progress. This plan does not create or reassign its task. The existing baseline records completed packaging, font, path, and vault-recovery verification. Agent should close out its assigned work by returning a concise completion report and flagging any unfinished acceptance items.
+**Status:** Completion report ready for owner review: [`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md). All acceptance items are met; Phase 0 closes when the owner accepts the report.
 
 **Original acceptance reference:**
 

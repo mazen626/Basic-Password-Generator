@@ -64,7 +64,7 @@ The portable build extracts about 100 MB to a temporary folder on every launch, 
 
 | Situation | What happens | How to recover |
 | --- | --- | --- |
-| Truncated or invalid `vault.json` | The unlock screen reports a damaged file. Unlock is refused and the file is never modified. | Close the app and copy the newest `vault-backup-*.bak` or `vault.json.v1-*.bak` over `vault.json`. |
+| Truncated or invalid `vault.json` | The unlock screen reports a damaged file. Unlock is refused and the file is never modified. | Close the app and copy the newest `vault-backup-*.bak` or `vault.json.v*-*.bak` over `vault.json`. |
 | Tampered ciphertext | Treated like a wrong password; the file is unchanged. | Same as above. |
 | Leftover `vault.json.tmp` | Ignored on read, and overwritten by the next save. | Nothing to do. |
 | A save fails partway | The previous `vault.json` stays intact, and later saves still work. | Nothing to do. |
