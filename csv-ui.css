@@ -1,0 +1,33 @@
+/* Styles for the CSV import/export results window (see csv-ui.js). Uses the colours defined in
+   page.html's :root, so it follows the app's theme. */
+
+.csv-report {
+  width: min(440px, calc(100vw - 32px));
+  max-height: calc(100vh - 80px);
+  padding: 20px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--raised);
+  color: var(--text);
+  box-shadow: 0 14px 34px #02020acc;
+}
+.csv-report::backdrop { background: #02020acc; }
+.csv-report h2 { margin: 0 0 6px; }
+.csv-report p, .csv-report ul { margin: 0; }
+.csv-report-summary { color: var(--label); font-size: 13px; overflow-wrap: anywhere; }
+.csv-report-subtitle { margin-top: 14px !important; color: var(--label); font-size: 12px; font-weight: 600; }
+.csv-report-list { margin-top: 12px !important; padding-left: 18px; color: var(--muted); font-size: 12px; }
+.csv-report-list li { margin-bottom: 4px; overflow-wrap: anywhere; }
+.csv-report-subtitle + .csv-report-list { margin-top: 6px !important; }
+.csv-report-rows { max-height: 150px; overflow: auto; }
+.csv-report-warning {
+  margin-top: 14px !important;
+  padding: 10px 12px;
+  border: 1px solid #633343;
+  border-radius: 9px;
+  background: #2a1420;
+  color: #ffc2cb;
+  font-size: 12px;
+}
+.csv-report-actions { display: flex; justify-content: flex-end; margin: 16px 0 0; }

@@ -16,6 +16,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setBackupCodeUsed: (entryId, codeId, used) => ipcRenderer.invoke('vault:set-backup-code-used', entryId, codeId, used),
   deleteEntry: (id) => ipcRenderer.invoke('vault:delete-entry', id),
   loadEntries: () => ipcRenderer.invoke('vault:load-entries'),
+  importCsv: () => ipcRenderer.invoke('vault:import-csv'),
+  exportCsv: () => ipcRenderer.invoke('vault:export-csv'),
   onAutoLock: (callback) => {
     const listener = () => callback();
     ipcRenderer.on('vault:auto-locked', listener);

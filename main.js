@@ -3,6 +3,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const PasswordVault = require('./vault');
+const { registerCsvHandlers } = require('./csv-handlers');
 
 const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
@@ -240,6 +241,16 @@ registerVaultHandler('vault:load-entries', async () => {
   const entries = await vault.loadEntries();
   armIdleLock();
   return { success: true, entries };
+});
+
+// CSV import and export (File menu). See csv-handlers.js.
+registerCsvHandlers({
+  registerVaultHandler,
+  getVault: () => vault,
+  getParentWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
+  dialog,
+  getDefaultDirectory: () => app.getPath('downloads'),
+  onActivity: armIdleLock
 });
 
 function createWindow() {

@@ -161,6 +161,7 @@
     *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
   }
 </style>
+<link rel="stylesheet" href="./csv-ui.css">
 </head>
 <body>
   <header class="titlebar">
@@ -170,6 +171,8 @@
         <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="fileMenu">File</button>
         <div class="menu-list" id="fileMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-action="lock">Lock vault</button>
+          <button type="button" role="menuitem" data-csv="import">Import CSV&hellip;</button>
+          <button type="button" role="menuitem" data-csv="export">Export CSV&hellip;</button>
           <div class="menu-sep" role="separator"></div>
           <button type="button" role="menuitem" data-action="minimize">Minimize</button>
           <button type="button" role="menuitem" data-action="quit">Quit <kbd>Alt+F4</kbd></button>
@@ -355,5 +358,6 @@
   <p id="vaultStatus" role="status" aria-live="polite"></p>
 <script src="./backup-codes.js"></script>
 <script src="./renderer.js"></script>
+<script src="./csv-ui.js"></script>
 </body>
 </html>

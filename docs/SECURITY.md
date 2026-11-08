@@ -54,6 +54,25 @@ Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy
 - **Activity:** the renderer reports activity at most once every 30 seconds, so auto-lock happens between 4.5 and 5 minutes after the last real input. Resuming from sleep or unlocking the screen re-checks the idle timer, but it does not lock immediately.
 - **Copying:** a native confirmation dialog issues a one-time token that is valid for 30 seconds. The clipboard is cleared after 10 seconds if it still holds the copied password (compared by SHA-256), and again on quit.
 
+## CSV import and export
+
+Both run from the File menu and only while the vault is unlocked. The page asks for "import" or "export" and nothing else: it never supplies a file path and never sees CSV text. The main process (`csv-handlers.js`) opens the native file dialogs and confirmation boxes itself, so page code cannot click through them. What goes back to the page is counts, row numbers, column names, and a file name; never passwords or file content.
+
+**Import** (`csv-import.js`)
+
+- The file must be UTF-8 or UTF-16 text of at most 5 MB and 10,000 rows. Every row passes the same `validateEntry` rules as an entry typed in by hand.
+- Nothing is written until the person confirms. Then an encrypted backup of the vault is made, and all new entries are added in one write transaction, so a failure leaves the vault unchanged. Existing entries are never overwritten.
+- The raw file bytes are zeroed once parsed. The decoded text and entry strings are ordinary JavaScript strings and cannot be zeroed.
+- "Import and delete" removes the CSV only after the import succeeded. It is a plain delete, not a secure wipe.
+
+**Export** (`csv-export.js`) is a deliberate exception to the rule that plaintext never reaches disk: the person asked for a readable copy of their vault, so every password is written unencrypted.
+
+- A native warning (default button: Cancel) comes first, then a native save dialog. A second warning appears if the chosen folder looks like OneDrive, Dropbox, Google Drive or iCloud. This is a best-effort check on folder names only.
+- Entries are decrypted only after the last confirmation. If the vault auto-locks while a dialog is open, nothing is written.
+- The file is created with mode `0o600`, which has no effect on Windows (see known gap 6). The write buffer is zeroed afterwards, but string copies in memory cannot be.
+- Values are written exactly as stored. A leading `=`, `+`, `-` or `@` is not escaped, because that would change real passwords, so opening the file in Excel can treat such cells as formulas. Import it into another password manager instead.
+- The file stays wherever it was saved until it is deleted. VLAUTR cannot protect it afterwards.
+
 ## Threat model
 
 ### In scope (defended)
@@ -86,6 +105,7 @@ Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
 7. **No permission request handler** is set on the Electron session (camera, notifications, and so on). The app never requests them, but nothing explicitly denies them.
 8. **No master-password change** and no iteration upgrade path for existing vaults.
+9. **Plaintext CSV files.** An exported CSV, and a CSV that is imported but not deleted, hold every password unencrypted for as long as they exist. See [CSV import and export](#csv-import-and-export).
 
 ## Reporting
 

@@ -37,6 +37,7 @@ VLAUTR keeps your credentials on your own machine. Everything is encrypted with 
 - Store site, username, password, notes, category, and favorite status for each entry.
 - Paste an entry's backup codes in any layout. Each code gets its own checkbox, so you can track which ones are used.
 - Edit and delete entries; duplicate sites are rejected.
+- Import passwords from a CSV file and export your vault to CSV, both from the File menu (see [Importing and exporting](#importing-and-exporting-csv)).
 - Search across sites, usernames, notes, and categories, and filter by category or favorites. Favorites are listed first.
 
 **Safety by default**
@@ -103,6 +104,13 @@ npm test
 
 Tests use Node's built-in test runner and cover the vault lifecycle, migration, and recovery from damaged or interrupted writes. See [docs/PHASE-0-BASELINE.md](docs/PHASE-0-BASELINE.md) for coverage, packaging checks, and performance numbers.
 
+## Importing and exporting (CSV)
+
+Both are in the **File** menu next to **Lock vault**, and both need the vault to be unlocked.
+
+- **Import CSV...** reads exports from Chrome, Edge, Brave, Firefox, Bitwarden, 1Password, LastPass, KeePass, Dashlane and Apple Passwords. Rows without a password are skipped and listed by row number. Entries already in the vault are skipped, and a second account on a site you already have is saved as `site (username)`. An encrypted backup of your vault is made before anything is added, and you can choose to delete the CSV afterwards (a plain delete, not a secure wipe).
+- **Export CSV...** writes every entry to a CSV you choose, with the columns `name, url, username, password, note, category, favorite, backup_codes` (backup codes already marked as used are left out). **The file is not encrypted.** VLAUTR asks you to confirm first, warns if the folder looks cloud-synced (OneDrive, Dropbox, Google Drive, iCloud), and reminds you to delete the file when you are done. Import it into your other password manager instead of opening it in Excel.
+
 ## Where your data lives
 
 The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the installed app, and the portable build all use this same file. Uninstalling VLAUTR leaves this folder in place, so your vault and backups are kept. Backups are saved next to it:
@@ -120,6 +128,10 @@ vault.js        PasswordVault: key derivation, encryption, validation, migration
 preload.js      Exposes the window.electronAPI bridge to the interface
 renderer.js     Interface logic: generator, vault entries, unlock flow, title bar menus
 page.html       The single page: markup, styles, and Content Security Policy
+csv-import.js   CSV import logic: parsing, column mapping, merging into the vault
+csv-export.js   CSV export logic: entries to CSV text
+csv-handlers.js Main-process side of import and export: file pickers, confirmations, writes
+csv-ui.js       File menu items and the results window (csv-ui.css holds its styles)
 test/           Vault tests (node --test)
 docs/           Screenshots and project documentation
 ```
