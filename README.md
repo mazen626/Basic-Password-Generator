@@ -129,9 +129,6 @@ preload.js      Exposes the window.electronAPI bridge to the interface
 renderer.js     Interface logic: generator, vault entries, unlock flow, title bar menus
 page.html       The single page: markup, styles, and Content Security Policy
 csv-transfer.js The single JS file for importing, exporting, and lastly handling CSV files
-csv-import.js   CSV import logic: parsing, column mapping, merging into the vault
-csv-export.js   CSV export logic: entries to CSV text
-csv-handlers.js Main-process side of import and export: file pickers, confirmations, writes
 csv-ui.js       File menu items and the results window (csv-ui.css holds its styles)
 test/           Vault tests (node --test)
 docs/           Screenshots and project documentation
