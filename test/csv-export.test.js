@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const { HEADER, buildVaultCsv, exportFileName } = require('../csv-export');
-const { parseCsv, parseVaultCsv } = require('../csv-import');
+const { HEADER, buildVaultCsv, exportFileName } = require('../csv-transfer');
+const { parseCsv, parseVaultCsv } = require('../csv-transfer');
 
 const entry = (site, username, password, extra = {}) => ({
   id: 'x', site, username, password, notes: '', category: 'login', favorite: false, backupCodes: [],

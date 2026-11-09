@@ -3,7 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { registerCsvHandlers } = require('../csv-handlers');
+const { registerCsvHandlers } = require('../csv-transfer');
 const { buildVaultCsv } = require('../csv-export');
 const { createVault, makeEntry } = require('./helpers');
 

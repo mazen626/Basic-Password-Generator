@@ -580,7 +580,7 @@ function ensureUniqueSite(entries, site, ignoredId) {
   }
 }
 
-// Shared with csv-import.js so imported rows are checked, and stored, by exactly the same rules
+// Shared with csv-transfer.js so imported rows are checked, and stored, by exactly the same rules
 // as entries typed in by hand.
 PasswordVault.validateEntry = validateEntry;
 PasswordVault.createBackupCode = createBackupCode;

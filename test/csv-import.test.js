@@ -5,7 +5,7 @@ const path = require('node:path');
 const test = require('node:test');
 const PasswordVault = require('../vault');
 const { MASTER_PASSWORD: MASTER, createVault } = require('./helpers');
-const { parseCsv, parseVaultCsv, planImport, previewImport, importEntries } = require('../csv-import');
+const { parseCsv, parseVaultCsv, planImport, previewImport, importEntries } = require('../csv-transfer');
 
 const bytes = (text) => Buffer.from(text, 'utf8');
 

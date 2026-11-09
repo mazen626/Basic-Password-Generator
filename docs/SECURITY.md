@@ -56,16 +56,16 @@ Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy
 
 ## CSV import and export
 
-Both run from the File menu and only while the vault is unlocked. The page asks for "import" or "export" and nothing else: it never supplies a file path and never sees CSV text. The main process (`csv-handlers.js`) opens the native file dialogs and confirmation boxes itself, so page code cannot click through them. What goes back to the page is counts, row numbers, column names, and a file name; never passwords or file content.
+Both run from the File menu and only while the vault is unlocked. The page asks for "import" or "export" and nothing else: it never supplies a file path and never sees CSV text. The main process (`csv-transfer.js`) opens the native file dialogs and confirmation boxes itself, so page code cannot click through them. What goes back to the page is counts, row numbers, column names, and a file name; never passwords or file content.
 
-**Import** (`csv-import.js`)
+**Import** (`csv-transfer.js`)
 
 - The file must be UTF-8 or UTF-16 text of at most 5 MB and 10,000 rows. Every row passes the same `validateEntry` rules as an entry typed in by hand.
 - Nothing is written until the person confirms. Then an encrypted backup of the vault is made, and all new entries are added in one write transaction, so a failure leaves the vault unchanged. Existing entries are never overwritten.
 - The raw file bytes are zeroed once parsed. The decoded text and entry strings are ordinary JavaScript strings and cannot be zeroed.
 - "Import and delete" removes the CSV only after the import succeeded. It is a plain delete, not a secure wipe.
 
-**Export** (`csv-export.js`) is a deliberate exception to the rule that plaintext never reaches disk: the person asked for a readable copy of their vault, so every password is written unencrypted.
+**Export** (`csv-transfer.js`) is a deliberate exception to the rule that plaintext never reaches disk: the person asked for a readable copy of their vault, so every password is written unencrypted.
 
 - A native warning (default button: Cancel) comes first, then a native save dialog. A second warning appears if the chosen folder looks like OneDrive, Dropbox, Google Drive or iCloud. This is a best-effort check on folder names only.
 - Entries are decrypted only after the last confirmation. If the vault auto-locks while a dialog is open, nothing is written.

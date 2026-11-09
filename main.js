@@ -3,7 +3,7 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const PasswordVault = require('./vault');
-const { registerCsvHandlers } = require('./csv-handlers');
+const { registerCsvHandlers } = require('./csv-transfer');
 
 const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
