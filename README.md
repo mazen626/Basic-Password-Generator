@@ -34,6 +34,7 @@ VLAUTR keeps your credentials on your own machine. Everything is encrypted with 
 
 **Encrypted vault**
 - Create a vault protected by a master password (8 to 1024 characters).
+- Change the master password from the File menu. An encrypted backup is saved first, and older backups keep needing the old password.
 - Store site, username, password, notes, category, and favorite status for each entry.
 - Paste an entry's backup codes in any layout. Each code gets its own checkbox, so you can track which ones are used.
 - Edit and delete entries; duplicate sites are rejected.
@@ -102,7 +103,7 @@ Both are unsigned for now, so Windows SmartScreen may warn you before the first 
 npm test
 ```
 
-Tests use Node's built-in test runner and cover the vault lifecycle, migration, and recovery from damaged or interrupted writes. See [docs/PHASE-0-BASELINE.md](docs/PHASE-0-BASELINE.md) for coverage, packaging checks, and performance numbers.
+Tests use Node's built-in test runner and cover the vault lifecycle, migration, recovery from damaged or interrupted writes, the IPC handlers (caller checks, copy tokens, clipboard clearing, auto-lock, permissions), backup codes, and CSV import and export. See [docs/PHASE-0-BASELINE.md](docs/PHASE-0-BASELINE.md) for coverage, packaging checks, and performance numbers.
 
 ## Importing and exporting (CSV)
 
@@ -123,14 +124,15 @@ Backups are exact copies of the encrypted vault and open with the master passwor
 ## Project structure
 
 ```
-main.js         Electron main process: window, IPC handlers, auto-lock, clipboard, menu actions
+main.js         Electron main process: window, app lifecycle, wiring
+ipc-handlers.js IPC handlers: caller checks, vault calls, copy and clipboard clearing, auto-lock, menu actions
 vault.js        PasswordVault: key derivation, encryption, validation, migration, file writes
 preload.js      Exposes the window.electronAPI bridge to the interface
 renderer.js     Interface logic: generator, vault entries, unlock flow, title bar menus
 page.html       The single page: markup, styles, and Content Security Policy
 csv-transfer.js The single JS file for importing, exporting, and lastly handling CSV files
 csv-ui.js       File menu items and the results window (csv-ui.css holds its styles)
-test/           Vault tests (node --test)
+test/           Tests for the vault, IPC handlers, backup codes and CSV (node --test)
 docs/           Screenshots and project documentation
 ```
 

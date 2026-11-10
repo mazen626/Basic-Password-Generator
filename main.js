@@ -1,256 +1,40 @@
-const { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor, shell } = require('electron');
-const crypto = require('node:crypto');
+const { app, BrowserWindow, clipboard, dialog, ipcMain, powerMonitor, session, shell } = require('electron');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 const PasswordVault = require('./vault');
 const { registerCsvHandlers } = require('./csv-transfer');
+const { createIpcHandlers, denyAllPermissions } = require('./ipc-handlers');
 
 const PAGE_PATH = path.join(__dirname, 'page.html');
 const PAGE_URL = pathToFileURL(PAGE_PATH).href;
-const IDLE_LOCK_MS = 5 * 60 * 1000;
-const CLIPBOARD_CLEAR_MS = 10 * 1000;
 const TITLE_BAR_HEIGHT = 36;
-const ZOOM_STEP = 0.5;
 const hasSingleInstanceLock = app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
 
 let vault;
-let operationQueue = Promise.resolve();
-let idleLockTimer;
-let lastActivityAt = 0;
-let clipboardClearTimer;
-let copiedPasswordDigest;
-let pendingCopyToken;
-let copyTokenTimer;
 
-function serializeVaultOperation(operation) {
-  const result = operationQueue.then(operation, operation);
-  operationQueue = result.catch(() => {});
-  return result;
-}
-
-function isTrustedFrame(event) {
-  const frame = event.senderFrame;
-  return Boolean(frame && frame === event.sender.mainFrame && frame.url === PAGE_URL);
-}
-
-function registerVaultHandler(channel, operation) {
-  ipcMain.handle(channel, async (event, ...args) => {
-    if (!isTrustedFrame(event)) return { success: false, error: 'Unauthorized caller.' };
-
-    try {
-      return await serializeVaultOperation(() => operation(...args));
-    } catch (error) {
-      return { success: false, error: error.message };
-    }
-  });
-}
-
-function clearIdleLock() {
-  if (idleLockTimer) clearTimeout(idleLockTimer);
-  idleLockTimer = null;
-}
-
-function armIdleLock() {
-  clearIdleLock();
-  if (!vault?.isUnlocked()) return;
-
-  lastActivityAt = Date.now();
-  idleLockTimer = setTimeout(lockIfIdle, IDLE_LOCK_MS);
-}
-
-function lockIfIdle() {
-  if (!vault?.isUnlocked()) return;
-  const remainingTime = IDLE_LOCK_MS - (Date.now() - lastActivityAt);
-  if (remainingTime > 0) {
-    clearIdleLock();
-    idleLockTimer = setTimeout(lockIfIdle, remainingTime);
-    return;
-  }
-
-  clearIdleLock();
-  clearCopyConfirmation();
-  vault.lock();
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (!win.isDestroyed()) win.webContents.send('vault:auto-locked');
-  });
-}
-
-function clearCopiedPassword() {
-  if (clipboardClearTimer) clearTimeout(clipboardClearTimer);
-  clipboardClearTimer = null;
-
-  if (copiedPasswordDigest) {
-    try {
-      const clipboardDigest = crypto.createHash('sha256').update(clipboard.readText()).digest();
-      if (crypto.timingSafeEqual(clipboardDigest, copiedPasswordDigest)) clipboard.clear();
-      clipboardDigest.fill(0);
-    } catch {}
-  }
-
-  copiedPasswordDigest?.fill(0);
-  copiedPasswordDigest = undefined;
-}
-
-function clearCopyConfirmation() {
-  if (copyTokenTimer) clearTimeout(copyTokenTimer);
-  copyTokenTimer = null;
-  pendingCopyToken = undefined;
-}
-
-async function confirmPasswordCopy() {
-  if (!vault?.isUnlocked()) throw new Error('Unlock the vault first.');
-  clearCopyConfirmation();
-  const confirmation = await dialog.showMessageBox(BrowserWindow.getFocusedWindow(), {
-    type: 'warning',
-    buttons: ['Copy for 10 seconds', 'Cancel'],
-    defaultId: 1,
-    cancelId: 1,
-    title: 'Copy password',
-    message: 'Copy this password to the system clipboard?',
-    detail: 'Other apps or clipboard history may capture it. The clipboard is temporary, not secure storage.'
-  });
-  if (confirmation.response !== 0) return { success: false, cancelled: true };
-
-  pendingCopyToken = crypto.randomUUID();
-  copyTokenTimer = setTimeout(() => {
-    pendingCopyToken = undefined;
-    copyTokenTimer = null;
-  }, 30000);
-  return { success: true, token: pendingCopyToken };
-}
-
-function copyPassword(password, token) {
-  if (!vault?.isUnlocked()) throw new Error('Unlock the vault first.');
-  if (!pendingCopyToken || token !== pendingCopyToken) throw new Error('Confirm the copy action first.');
-  pendingCopyToken = undefined;
-  if (copyTokenTimer) clearTimeout(copyTokenTimer);
-  copyTokenTimer = null;
-  if (typeof password !== 'string' || password.length === 0 || password.length > 4096) {
-    throw new Error('Password must contain 1 to 4096 characters.');
-  }
-
-  clearCopiedPassword();
-  clipboard.writeText(password);
-  copiedPasswordDigest = crypto.createHash('sha256').update(password).digest();
-  clipboardClearTimer = setTimeout(clearCopiedPassword, CLIPBOARD_CLEAR_MS);
-  return { success: true };
-}
-
-registerVaultHandler('vault:status', async () => ({ success: true, ...await vault.getStatus() }));
-
-registerVaultHandler('vault:backup', async () => ({
-  success: true,
-  backupName: await vault.createBackup()
-}));
-
-registerVaultHandler('vault:open-folder', async () => {
-  const error = await shell.openPath(path.dirname(vault.filePath));
-  if (error) throw new Error(error);
-  return { success: true };
+const ipc = createIpcHandlers({
+  ipcMain,
+  getVault: () => vault,
+  pageUrl: PAGE_URL,
+  clipboard,
+  dialog,
+  shell,
+  getFocusedWindow: () => BrowserWindow.getFocusedWindow(),
+  getAllWindows: () => BrowserWindow.getAllWindows(),
+  getWindowFor: (contents) => BrowserWindow.fromWebContents(contents),
+  quit: () => app.quit()
 });
+ipc.registerAll();
 
-registerVaultHandler('vault:unlock', async (masterPassword, confirmation) => {
-  const result = await vault.unlock(masterPassword, confirmation);
-  armIdleLock();
-  return { success: true, created: result.created, migrated: result.migrated };
-});
-
-registerVaultHandler('vault:lock', () => {
-  clearIdleLock();
-  clearCopyConfirmation();
-  vault.lock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:activity', () => {
-  armIdleLock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:confirm-copy', confirmPasswordCopy);
-
-registerVaultHandler('vault:copy-password', (password, token) => {
-  const result = copyPassword(password, token);
-  armIdleLock();
-  return result;
-});
-
-ipcMain.handle('window:menu-action', (event, action) => {
-  if (!isTrustedFrame(event)) return { success: false, error: 'Unauthorized caller.' };
-  const contents = event.sender;
-  const win = BrowserWindow.fromWebContents(contents);
-  switch (action) {
-    case 'undo':
-    case 'redo':
-    case 'cut':
-    case 'copy':
-    case 'paste':
-    case 'selectAll':
-      contents[action]();
-      break;
-    case 'zoomIn':
-      contents.setZoomLevel(Math.min(contents.getZoomLevel() + ZOOM_STEP, 3));
-      break;
-    case 'zoomOut':
-      contents.setZoomLevel(Math.max(contents.getZoomLevel() - ZOOM_STEP, -3));
-      break;
-    case 'resetZoom':
-      contents.setZoomLevel(0);
-      break;
-    case 'toggleFullScreen':
-      win?.setFullScreen(!win.isFullScreen());
-      break;
-    case 'minimize':
-      win?.minimize();
-      break;
-    case 'quit':
-      app.quit();
-      break;
-    default:
-      return { success: false, error: 'Unknown menu action.' };
-  }
-  return { success: true };
-});
-
-registerVaultHandler('vault:save-entry', async (entry) => {
-  await vault.saveEntry(entry);
-  armIdleLock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:update-entry', async (id, entry) => {
-  await vault.updateEntry(id, entry);
-  armIdleLock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:set-backup-code-used', async (entryId, codeId, used) => {
-  await vault.setBackupCodeUsed(entryId, codeId, used);
-  armIdleLock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:delete-entry', async (id) => {
-  await vault.deleteEntry(id);
-  armIdleLock();
-  return { success: true };
-});
-
-registerVaultHandler('vault:load-entries', async () => {
-  const entries = await vault.loadEntries();
-  armIdleLock();
-  return { success: true, entries };
-});
-
-// CSV import and export (File menu). See csv-handlers.js.
+// CSV import and export (File menu). See csv-transfer.js.
 registerCsvHandlers({
-  registerVaultHandler,
+  registerVaultHandler: ipc.registerVaultHandler,
   getVault: () => vault,
   getParentWindow: () => BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0] ?? null,
   dialog,
   getDefaultDirectory: () => app.getPath('downloads'),
-  onActivity: armIdleLock
+  onActivity: ipc.armIdleLock
 });
 
 function createWindow() {
@@ -277,17 +61,14 @@ function createWindow() {
     if (navigationUrl !== PAGE_URL) event.preventDefault();
   });
   win.loadFile(PAGE_PATH);
-  win.on('closed', () => {
-    clearIdleLock();
-    clearCopyConfirmation();
-    vault?.lock();
-  });
+  win.on('closed', () => ipc.shutDown());
 }
 
 app.whenReady().then(() => {
   if (!hasSingleInstanceLock) return;
-  powerMonitor.on('resume', lockIfIdle);
-  powerMonitor.on('unlock-screen', lockIfIdle);
+  denyAllPermissions(session.defaultSession);
+  powerMonitor.on('resume', ipc.lockIfIdle);
+  powerMonitor.on('unlock-screen', ipc.lockIfIdle);
   vault = new PasswordVault(path.join(app.getPath('userData'), 'vault.json'));
   createWindow();
 
@@ -304,12 +85,7 @@ app.whenReady().then(() => {
   });
 });
 
-app.on('before-quit', () => {
-  clearIdleLock();
-  clearCopyConfirmation();
-  vault?.lock();
-  clearCopiedPassword();
-});
+app.on('before-quit', () => ipc.shutDown({ clearClipboard: true }));
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

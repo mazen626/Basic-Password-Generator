@@ -48,7 +48,7 @@ This plan is based on the project technical report and the current Phase 0 resul
 - Copy requests contain an entry identifier rather than a plaintext password; arbitrary IDs, malformed payloads, wrong senders, and locked-vault calls are rejected.
 - CSP, context isolation, sandboxing, and disabled Node integration remain intact; permission requests are denied unless explicitly required.
 - A failed write or password change leaves either the old vault or a fully validated new vault recoverable; no silent empty-vault fallback or plaintext temp file is introduced.
-- Existing v1/v2 vaults and current exact entry schema remain readable, with migration tests if format changes are necessary.
+- Existing version 1, 2 and 3 vaults and the current exact entry schema remain readable, with migration tests if format changes are necessary.
 - Security-focused tests and full `npm test` pass. Security docs describe the actual improvement and remaining memory/OS limitations.
 
 **Dependency:** Phase 0 handoff review (done; report accepted 2026-11-08). This phase contains security-sensitive design choices; obtain user approval of the plan before implementation.
@@ -160,7 +160,7 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 ## Progress tracking
 
 - Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
-- Phase 1: **Next**, gated by approval of its security design.
+- Phase 1: **Implemented on the `phase-1-security` branch** (milestones 1.1 to 1.4); not yet merged into `main`.
 - Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.

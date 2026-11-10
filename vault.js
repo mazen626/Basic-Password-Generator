@@ -73,9 +73,7 @@ class PasswordVault {
       throw error;
     }
 
-    const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
-    await fs.writeFile(path.join(path.dirname(this.filePath), backupName), contents, { flag: 'wx', mode: 0o600 });
-    return backupName;
+    return writeBackup(this.filePath, contents);
   }
 
   async unlock(masterPassword, confirmation) {
@@ -129,6 +127,61 @@ class PasswordVault {
     return { created: false, migrated };
   }
 
+  // Re-encrypts the vault under a new master password, with a fresh salt and the current
+  // iteration count. The current password is checked first, and a byte-for-byte backup of the
+  // vault is saved before the rewrite. Any failure before the rename leaves the old vault and the
+  // old key in use. Backups made before the change still need the old password.
+  async changeMasterPassword(currentPassword, newPassword, confirmation) {
+    this.requireKey();
+    if (typeof currentPassword !== 'string' || currentPassword.length === 0 || currentPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+      throw new Error('Enter your current master password.');
+    }
+    validateMasterPassword(newPassword);
+    validateMasterPasswordConfirmation(newPassword, confirmation);
+    if (newPassword === currentPassword) {
+      throw new Error('The new master password must be different from the current one.');
+    }
+
+    return this.runWriteTransaction(async () => {
+      this.requireKey();
+      const contents = await fs.readFile(this.filePath, 'utf8');
+      if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) throw new Error('Vault file is too large.');
+      let envelope;
+      try {
+        envelope = validateEnvelope(JSON.parse(contents));
+      } catch {
+        throw new Error('Vault file is invalid or corrupted.');
+      }
+      if (envelope.version !== FORMAT_VERSION) throw new Error('Vault must be upgraded by unlocking again.');
+
+      const currentKey = await deriveKey(currentPassword, Buffer.from(envelope.salt, 'base64'), envelope.iterations);
+      let entries;
+      try {
+        entries = decryptEntries(envelope, currentKey);
+      } catch {
+        throw new Error('The current master password is incorrect.');
+      } finally {
+        currentKey.fill(0);
+      }
+
+      const backupName = await writeBackup(this.filePath, contents);
+      const salt = crypto.randomBytes(SALT_LENGTH);
+      const newKey = await deriveKey(newPassword, salt, PBKDF2_ITERATIONS);
+      try {
+        validateEntries(entries);
+        const newEnvelope = encryptEntries(entries, newKey, salt, PBKDF2_ITERATIONS);
+        validateEntries(decryptEntries(newEnvelope, newKey));
+        await writeVaultFile(this.filePath, newEnvelope);
+      } catch (error) {
+        newKey.fill(0);
+        throw error;
+      }
+
+      this.replaceKey(newKey);
+      return { backupName };
+    });
+  }
+
   async initialize(masterPassword, confirmation) {
     validateMasterPasswordConfirmation(masterPassword, confirmation);
     const salt = crypto.randomBytes(SALT_LENGTH);
@@ -155,6 +208,30 @@ class PasswordVault {
     const key = this.requireKey();
     const { entries } = await this.readEntriesForWrite(key);
     return entries;
+  }
+
+  // What the window gets at load: everything except passwords and backup code values.
+  async loadEntrySummaries() {
+    return (await this.loadEntries()).map(summarizeEntry);
+  }
+
+  async findEntry(id) {
+    validateEntryId(id);
+    const entry = (await this.loadEntries()).find((savedEntry) => savedEntry.id === id);
+    if (!entry) throw new Error('Entry not found.');
+    return entry;
+  }
+
+  async getEntrySite(id) {
+    return (await this.findEntry(id)).site;
+  }
+
+  async getEntryPassword(id) {
+    return (await this.findEntry(id)).password;
+  }
+
+  async getBackupCodes(id) {
+    return (await this.findEntry(id)).backupCodes.map(({ id: codeId, code, used }) => ({ id: codeId, code, used }));
   }
 
   async saveEntry(entry) {
@@ -184,8 +261,10 @@ class PasswordVault {
     });
   }
 
+  // Leaving out `password` or `backupCodes` keeps the saved value, so the window can edit
+  // an entry without first loading its secrets.
   async updateEntry(id, entry) {
-    validateEntry(entry);
+    validateEntryUpdate(entry);
     validateEntryId(id);
     return this.runWriteTransaction(async () => {
       const key = this.requireKey();
@@ -196,17 +275,19 @@ class PasswordVault {
       ensureUniqueSite(entries, entry.site, id);
 
       const current = entries[index];
+      const password = Object.hasOwn(entry, 'password') ? entry.password : current.password;
+      const codes = Object.hasOwn(entry, 'backupCodes') ? entry.backupCodes : current.backupCodes.map((saved) => saved.code);
       entries[index] = {
         id,
         site: entry.site.trim(),
         username: entry.username,
-        password: entry.password,
+        password,
         notes: entry.notes,
         category: entry.category,
         favorite: entry.favorite,
-        backupCodes: mergeBackupCodes(current.backupCodes, entry.backupCodes),
+        backupCodes: mergeBackupCodes(current.backupCodes, codes),
         createdAt: current.createdAt,
-        updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
+        updatedAt: password === current.password ? current.updatedAt : new Date().toISOString()
       };
 
       await this.persistEntries(entries, key, envelope);
@@ -349,6 +430,24 @@ function migrateEntries(entries) {
   });
 }
 
+function summarizeEntry(entry) {
+  return {
+    id: entry.id,
+    site: entry.site,
+    username: entry.username,
+    notes: entry.notes,
+    category: entry.category,
+    favorite: entry.favorite,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    hasPassword: entry.password.length > 0,
+    backupCodes: {
+      total: entry.backupCodes.length,
+      unused: entry.backupCodes.filter((code) => !code.used).length
+    }
+  };
+}
+
 function createBackupCode(code) {
   return { id: crypto.randomUUID(), code, used: false };
 }
@@ -359,8 +458,15 @@ function mergeBackupCodes(currentCodes, codes) {
 
 async function backupLegacyVault(filePath, contents, version) {
   const backupPath = `${filePath}.v${version}-${Date.now()}-${crypto.randomUUID()}.bak`;
-  await fs.writeFile(backupPath, contents, { flag: 'wx', mode: 0o600 });
+  await writeAndFlush(backupPath, contents, 'wx');
   return backupPath;
+}
+
+// Saves an exact copy of the vault file next to it, flushed to disk, and returns its name.
+async function writeBackup(filePath, contents) {
+  const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
+  await writeAndFlush(path.join(path.dirname(filePath), backupName), contents, 'wx');
+  return backupName;
 }
 
 async function readVaultFile(filePath) {
@@ -385,11 +491,24 @@ async function writeVaultFile(filePath, envelope) {
     if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
       throw new Error('Vault has reached its maximum file size.');
     }
-    await fs.writeFile(temporaryPath, contents, { mode: 0o600 });
+    await writeAndFlush(temporaryPath, contents);
     await fs.rename(temporaryPath, filePath);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+// Writes the file and flushes it to disk (FlushFileBuffers on Windows) before returning, so the
+// new vault is fully on disk before it replaces the old one. Windows cannot flush a folder, so a
+// power cut right after the rename can still lose the rename itself; the old vault then remains.
+async function writeAndFlush(filePath, contents, flag = 'w') {
+  const handle = await fs.open(filePath, flag, 0o600);
+  try {
+    await handle.writeFile(contents);
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 
@@ -461,6 +580,18 @@ function validateEntry(entry) {
     throw new Error('Favorite must be true or false.');
   }
   validateBackupCodes(entry.backupCodes);
+}
+
+function validateEntryUpdate(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('Entry must include site, username, password, notes, category, favorite, and backup codes.');
+  }
+  // Check the fields that were sent; an omitted password or code list is filled in from the saved entry.
+  validateEntry({
+    ...entry,
+    password: Object.hasOwn(entry, 'password') ? entry.password : 'unchanged',
+    backupCodes: Object.hasOwn(entry, 'backupCodes') ? entry.backupCodes : []
+  });
 }
 
 function validateBackupCodes(codes) {

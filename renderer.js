@@ -155,10 +155,21 @@ function showDuplicateSiteError(input, message) {
   return true;
 }
 
-async function copyPasswordWithConfirmation(password) {
-  const confirmation = await window.electronAPI.confirmPasswordCopy();
+// Copying an entry sends only its ID; the main process reads the password itself.
+async function copyEntryWithConfirmation(entryId) {
+  const confirmation = await window.electronAPI.confirmEntryCopy(entryId);
   if (!confirmation.success) return confirmation;
-  return window.electronAPI.copyPassword(password, confirmation.token);
+  return window.electronAPI.copyEntryPassword(entryId, confirmation.token);
+}
+
+async function copyGeneratedWithConfirmation(password) {
+  const confirmation = await window.electronAPI.confirmGeneratedCopy();
+  if (!confirmation.success) return confirmation;
+  return window.electronAPI.copyGeneratedPassword(password, confirmation.token);
+}
+
+function describeCopy(result) {
+  return result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error;
 }
 
 async function refreshEntries() {
@@ -207,12 +218,13 @@ function renderEntry(entry) {
   const details = document.createElement("span");
   const password = document.createElement("span");
   const actions = document.createElement("div");
-  let revealed = false;
+  // A revealed password lives only here, until it is hidden or this card is replaced.
+  let revealedPassword = null;
 
   const siteName = typeof savedEntry.site === "string" ? savedEntry.site : "Unknown site";
   const username = typeof savedEntry.username === "string" ? savedEntry.username : "";
   const category = CATEGORY_LABELS[savedEntry.category] || "Uncategorized";
-  const entryPassword = typeof savedEntry.password === "string" ? savedEntry.password : "";
+  const canUsePassword = savedEntry.hasPassword === true && typeof savedEntry.id === "string";
   site.textContent = `${savedEntry.favorite === true ? "★ " : ""}${siteName}`;
   details.textContent = `${category} · ${username || "No username"}`;
   details.className = "entry-detail";
@@ -221,17 +233,28 @@ function renderEntry(entry) {
   password.textContent = "••••••••••";
   password.className = "entry-password";
   actions.className = "entry-actions";
-  const revealButton = makeButton("Reveal", () => {
-    revealed = !revealed;
-    password.textContent = revealed ? entryPassword : "••••••••••";
-    revealButton.textContent = revealed ? "Hide" : "Reveal";
-  });
+  const revealButton = makeButton("Reveal", () => withDisabled(revealButton, async () => {
+    if (revealedPassword !== null) {
+      revealedPassword = null;
+      password.textContent = "••••••••••";
+      revealButton.textContent = "Reveal";
+      return;
+    }
+    const result = await window.electronAPI.revealPassword(savedEntry.id);
+    if (!item.isConnected) return;
+    if (!result.success) {
+      setVaultStatus(result.error);
+      return;
+    }
+    revealedPassword = result.password;
+    password.textContent = revealedPassword;
+    revealButton.textContent = "Hide";
+  }));
   const copyButton = makeButton("Copy", async () => {
-    const result = await copyPasswordWithConfirmation(entryPassword);
-    setVaultStatus(result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error);
+    setVaultStatus(describeCopy(await copyEntryWithConfirmation(savedEntry.id)));
   });
-  revealButton.disabled = !entryPassword;
-  copyButton.disabled = !entryPassword;
+  revealButton.disabled = !canUsePassword;
+  copyButton.disabled = !canUsePassword;
   actions.append(revealButton, copyButton);
   if (typeof savedEntry.id === "string") {
     const deleteButton = makeButton("Delete", () => withDisabled(deleteButton, async () => {
@@ -249,7 +272,8 @@ function renderEntry(entry) {
       }
     }));
     deleteButton.className = "danger-button";
-    actions.append(makeButton("Edit", () => renderEntryEditor(savedEntry, item)), deleteButton);
+    const editButton = makeButton("Edit", () => withDisabled(editButton, () => openEntryEditor(savedEntry, item)));
+    actions.append(editButton, deleteButton);
   }
 
   const codes = renderEntryCodes(savedEntry);
@@ -346,9 +370,11 @@ function createBackupCodeInput(idPrefix, existingCodes = []) {
   return { element, getCodes, getProblem, reset };
 }
 
+// The card shows only the counts. The codes themselves are fetched when "Show codes" is pressed,
+// and dropped again on "Hide codes" or when the card is replaced.
 function renderEntryCodes(savedEntry) {
-  const codes = Array.isArray(savedEntry.backupCodes) ? savedEntry.backupCodes : [];
-  if (codes.length === 0 || typeof savedEntry.id !== "string") return null;
+  const counts = savedEntry.backupCodes && typeof savedEntry.backupCodes === "object" ? savedEntry.backupCodes : null;
+  if (!counts || !(counts.total > 0) || typeof savedEntry.id !== "string") return null;
 
   const section = document.createElement("div");
   const heading = document.createElement("div");
@@ -357,8 +383,7 @@ function renderEntryCodes(savedEntry) {
   let shown = false;
 
   function updateSummary() {
-    const unused = codes.filter((code) => !code.used).length;
-    summary.textContent = `Backup codes: ${unused} of ${codes.length} unused`;
+    summary.textContent = `Backup codes: ${counts.unused} of ${counts.total} unused`;
   }
 
   function renderCode(code) {
@@ -380,6 +405,7 @@ function renderEntryCodes(savedEntry) {
         setVaultStatus(result.error);
         return;
       }
+      if (code.used !== checkbox.checked) counts.unused += checkbox.checked ? -1 : 1;
       code.used = checkbox.checked;
       value.classList.toggle("backup-code-used", code.used);
       updateSummary();
@@ -389,12 +415,28 @@ function renderEntryCodes(savedEntry) {
     return item;
   }
 
-  const toggleButton = makeButton("Show codes", () => {
-    shown = !shown;
-    list.replaceChildren(...(shown ? codes.map(renderCode) : []));
-    list.hidden = !shown;
-    toggleButton.textContent = shown ? "Hide codes" : "Show codes";
-  });
+  const toggleButton = makeButton("Show codes", () => withDisabled(toggleButton, async () => {
+    if (shown) {
+      shown = false;
+      list.replaceChildren();
+      list.hidden = true;
+      toggleButton.textContent = "Show codes";
+      return;
+    }
+    const result = await window.electronAPI.getBackupCodes(savedEntry.id);
+    if (!section.isConnected) return;
+    if (!result.success) {
+      setVaultStatus(result.error);
+      return;
+    }
+    shown = true;
+    counts.total = result.codes.length;
+    counts.unused = result.codes.filter((code) => !code.used).length;
+    list.replaceChildren(...result.codes.map(renderCode));
+    list.hidden = false;
+    toggleButton.textContent = "Hide codes";
+    updateSummary();
+  }));
   section.className = "entry-codes";
   heading.className = "backup-code-summary";
   list.className = "backup-code-grid";
@@ -405,7 +447,23 @@ function renderEntryCodes(savedEntry) {
   return section;
 }
 
-function renderEntryEditor(entry, item) {
+// Fetches the entry's backup codes (if it has any) before showing the edit form.
+// The password is not fetched unless "Show" is pressed in the form.
+async function openEntryEditor(entry, item) {
+  let codes = [];
+  if (entry.backupCodes?.total > 0) {
+    const result = await window.electronAPI.getBackupCodes(entry.id);
+    if (!result.success) {
+      setVaultStatus(result.error);
+      return;
+    }
+    codes = result.codes;
+  }
+  if (!item.isConnected) return;
+  renderEntryEditor(entry, item, codes);
+}
+
+function renderEntryEditor(entry, item, existingCodes) {
   const form = document.createElement("form");
   const siteField = document.createElement("div");
   const siteLabel = document.createElement("label");
@@ -426,7 +484,7 @@ function renderEntryEditor(entry, item) {
   const password = document.createElement("input");
   const actions = document.createElement("div");
   const idPrefix = `edit-${++editorCount}`;
-  const backupCodes = createBackupCodeInput(idPrefix, Array.isArray(entry.backupCodes) ? entry.backupCodes : []);
+  const backupCodes = createBackupCodeInput(idPrefix, existingCodes);
 
   [[siteLabel, site, "site"], [usernameLabel, username, "username"], [passwordLabel, password, "password"], [notesLabel, notes, "notes"], [categoryLabel, category, "category"]]
     .forEach(([label, control, name]) => {
@@ -460,7 +518,30 @@ function renderEntryEditor(entry, item) {
   passwordLabel.textContent = "Password";
   password.type = "password";
   password.maxLength = 4096;
-  password.value = entry.password ?? "";
+  password.value = "";
+  password.placeholder = "Leave blank to keep the current password";
+  password.autocomplete = "off";
+  const passwordRow = document.createElement("div");
+  passwordRow.className = "password-row";
+  const showPasswordButton = makeButton("Show", () => withDisabled(showPasswordButton, async () => {
+    if (password.type === "text") {
+      password.type = "password";
+      showPasswordButton.textContent = "Show";
+      return;
+    }
+    if (password.value === "") {
+      const result = await window.electronAPI.revealPassword(entry.id);
+      if (!form.isConnected) return;
+      if (!result.success) {
+        setVaultStatus(result.error);
+        return;
+      }
+      password.value = result.password;
+    }
+    password.type = "text";
+    showPasswordButton.textContent = "Hide";
+  }));
+  passwordRow.append(password, showPasswordButton);
   siteField.className = "field";
   passwordField.className = "field";
   actions.className = "entry-actions";
@@ -471,22 +552,24 @@ function renderEntryEditor(entry, item) {
   notesField.append(notesLabel, notes);
   categoryField.className = "field";
   categoryField.append(categoryLabel, category);
-  passwordField.append(passwordLabel, password);
+  passwordField.append(passwordLabel, passwordRow);
   const saveChangesButton = makeButton("Save changes", () => withDisabled(saveChangesButton, async () => {
       const codeProblem = backupCodes.getProblem();
       if (codeProblem) {
         setVaultStatus(codeProblem);
         return;
       }
-      const result = await window.electronAPI.updateEntry(entry.id, {
+      const changes = {
         site: site.value.trim(),
         username: username.value,
-        password: password.value,
         notes: notes.value,
         category: category.value,
         favorite: favorite.checked,
         backupCodes: backupCodes.getCodes()
-      });
+      };
+      // A blank password field keeps the saved password.
+      if (password.value !== "") changes.password = password.value;
+      const result = await window.electronAPI.updateEntry(entry.id, changes);
       if (!result.success) {
         showDuplicateSiteError(site, result.error);
         setVaultStatus(result.error);
@@ -530,6 +613,7 @@ async function initializeUnlockForm() {
 }
 
 function clearUnlockedView(message) {
+  closeChangePasswordDialog();
   entriesList.replaceChildren();
   savedEntries = [];
   searchInput.value = "";
@@ -646,8 +730,7 @@ document.getElementById("copyBtn").addEventListener("click", async () => {
     setVaultStatus("Generate a password before copying.");
     return;
   }
-  const result = await copyPasswordWithConfirmation(output.textContent);
-  setVaultStatus(result.success ? "Copied. Clipboard clears after 10 seconds." : result.cancelled ? "Copy cancelled." : result.error);
+  setVaultStatus(describeCopy(await copyGeneratedWithConfirmation(output.textContent)));
 });
 
 saveButton.addEventListener("click", () => withDisabled(saveButton, saveNewEntry));
@@ -710,6 +793,7 @@ favoriteFilter.addEventListener("change", renderEntries);
 
 const menuTriggers = [...document.querySelectorAll(".menu-trigger")];
 const lockMenuItem = document.querySelector('[data-action="lock"]');
+const changePasswordMenuItem = document.getElementById("changePasswordMenuItem");
 
 function menuListFor(trigger) {
   return document.getElementById(trigger.getAttribute("aria-controls"));
@@ -725,6 +809,7 @@ function closeMenus() {
 function openMenu(trigger, focusFirst = false) {
   closeMenus();
   lockMenuItem.disabled = vaultPanel.classList.contains("hidden");
+  changePasswordMenuItem.disabled = vaultPanel.classList.contains("hidden");
   trigger.setAttribute("aria-expanded", "true");
   const list = menuListFor(trigger);
   list.hidden = false;
@@ -763,6 +848,56 @@ menuTriggers.forEach((trigger, index) => {
       const step = event.key === "ArrowRight" ? 1 : -1;
       openMenu(menuTriggers[(index + step + menuTriggers.length) % menuTriggers.length], true);
     }
+  });
+});
+
+// Change master password (File menu). The form's values are cleared whenever it closes.
+const changePasswordDialog = document.getElementById("changePasswordDialog");
+const changePasswordForm = document.getElementById("changePasswordForm");
+const changePasswordFields = ["currentMasterPassword", "newMasterPassword", "confirmNewMasterPassword"].map((id) => document.getElementById(id));
+const changePasswordStatus = document.getElementById("changePasswordStatus");
+const changePasswordSubmit = document.getElementById("changePasswordSubmit");
+
+function clearChangePasswordForm() {
+  changePasswordFields.forEach((field) => { field.value = ""; });
+  changePasswordStatus.textContent = "";
+}
+
+function closeChangePasswordDialog() {
+  if (changePasswordDialog.open) changePasswordDialog.close();
+  clearChangePasswordForm();
+}
+
+changePasswordDialog.addEventListener("close", clearChangePasswordForm);
+document.getElementById("changePasswordCancel").addEventListener("click", closeChangePasswordDialog);
+
+changePasswordMenuItem.addEventListener("click", () => {
+  closeMenus();
+  if (vaultPanel.classList.contains("hidden")) return;
+  clearChangePasswordForm();
+  changePasswordDialog.showModal();
+  changePasswordFields[0].focus();
+});
+
+changePasswordForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const [current, next, confirmation] = changePasswordFields;
+  if (next.value !== confirmation.value) {
+    changePasswordStatus.textContent = "The new passwords do not match.";
+    confirmation.focus();
+    return;
+  }
+  withDisabled(changePasswordSubmit, async () => {
+    changePasswordStatus.textContent = "Changing the master password...";
+    const result = await window.electronAPI.changeMasterPassword(current.value, next.value, confirmation.value);
+    if (!changePasswordDialog.open) return;
+    if (!result.success) {
+      changePasswordStatus.textContent = result.error;
+      (result.error.includes("current master password") ? current : next).select();
+      return;
+    }
+    closeChangePasswordDialog();
+    setVaultStatus("Master password changed. Your previous backups still need the old password.");
   });
 });
 
