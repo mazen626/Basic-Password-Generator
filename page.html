@@ -144,6 +144,10 @@
   .backup-code-tag { color: var(--muted); font-size: 10px; }
   .backup-code-grid button { flex: none; width: 20px; height: 20px; min-height: 0; padding: 0; border-radius: 5px; font-size: 12px; line-height: 1; }
   .entry-codes { display: grid; gap: 8px; margin: 0 0 10px; }
+  .change-password-form { display: grid; gap: 0; }
+  .change-password-form h2 { margin-bottom: 14px; }
+  .change-password-status { min-height: 16px; margin: 10px 0 0; color: #ff9ead; font-size: 12px; }
+  .change-password-actions { gap: 8px; }
   .password-row { display: flex; gap: 7px; }
   .password-row input { flex: 1; min-width: 0; }
   .password-row button { flex: none; min-height: 32px; padding: 6px 12px; font-size: 11px; }
@@ -174,6 +178,7 @@
         <button class="menu-trigger" type="button" aria-haspopup="menu" aria-expanded="false" aria-controls="fileMenu">File</button>
         <div class="menu-list" id="fileMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-action="lock">Lock vault</button>
+          <button type="button" role="menuitem" id="changePasswordMenuItem">Change master password&hellip;</button>
           <button type="button" role="menuitem" data-csv="import">Import CSV&hellip;</button>
           <button type="button" role="menuitem" data-csv="export">Export CSV&hellip;</button>
           <div class="menu-sep" role="separator"></div>
@@ -359,6 +364,30 @@
     </section>
   </main>
   <p id="vaultStatus" role="status" aria-live="polite"></p>
+<dialog id="changePasswordDialog" class="csv-report" aria-labelledby="changePasswordTitle">
+  <form id="changePasswordForm" class="change-password-form">
+    <h2 id="changePasswordTitle">Change master password</h2>
+    <div class="field">
+      <label for="currentMasterPassword">Current master password</label>
+      <input type="password" id="currentMasterPassword" autocomplete="current-password" maxlength="1024" required>
+    </div>
+    <div class="field">
+      <label for="newMasterPassword">New master password</label>
+      <input type="password" id="newMasterPassword" autocomplete="new-password" minlength="8" maxlength="1024" required>
+      <small>8 to 1024 characters.</small>
+    </div>
+    <div class="field">
+      <label for="confirmNewMasterPassword">Confirm new master password</label>
+      <input type="password" id="confirmNewMasterPassword" autocomplete="new-password" minlength="8" maxlength="1024" required>
+    </div>
+    <p class="csv-report-warning">An encrypted backup of your vault is saved first. That backup, and any older backups, still open only with your current master password.</p>
+    <p id="changePasswordStatus" class="change-password-status" role="alert"></p>
+    <div class="csv-report-actions change-password-actions">
+      <button type="button" id="changePasswordCancel">Cancel</button>
+      <button type="submit" id="changePasswordSubmit" class="primary-button">Change password</button>
+    </div>
+  </form>
+</dialog>
 <script src="./backup-codes.js"></script>
 <script src="./renderer.js"></script>
 <script src="./csv-ui.js"></script>

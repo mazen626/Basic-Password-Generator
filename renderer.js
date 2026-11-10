@@ -613,6 +613,7 @@ async function initializeUnlockForm() {
 }
 
 function clearUnlockedView(message) {
+  closeChangePasswordDialog();
   entriesList.replaceChildren();
   savedEntries = [];
   searchInput.value = "";
@@ -792,6 +793,7 @@ favoriteFilter.addEventListener("change", renderEntries);
 
 const menuTriggers = [...document.querySelectorAll(".menu-trigger")];
 const lockMenuItem = document.querySelector('[data-action="lock"]');
+const changePasswordMenuItem = document.getElementById("changePasswordMenuItem");
 
 function menuListFor(trigger) {
   return document.getElementById(trigger.getAttribute("aria-controls"));
@@ -807,6 +809,7 @@ function closeMenus() {
 function openMenu(trigger, focusFirst = false) {
   closeMenus();
   lockMenuItem.disabled = vaultPanel.classList.contains("hidden");
+  changePasswordMenuItem.disabled = vaultPanel.classList.contains("hidden");
   trigger.setAttribute("aria-expanded", "true");
   const list = menuListFor(trigger);
   list.hidden = false;
@@ -845,6 +848,56 @@ menuTriggers.forEach((trigger, index) => {
       const step = event.key === "ArrowRight" ? 1 : -1;
       openMenu(menuTriggers[(index + step + menuTriggers.length) % menuTriggers.length], true);
     }
+  });
+});
+
+// Change master password (File menu). The form's values are cleared whenever it closes.
+const changePasswordDialog = document.getElementById("changePasswordDialog");
+const changePasswordForm = document.getElementById("changePasswordForm");
+const changePasswordFields = ["currentMasterPassword", "newMasterPassword", "confirmNewMasterPassword"].map((id) => document.getElementById(id));
+const changePasswordStatus = document.getElementById("changePasswordStatus");
+const changePasswordSubmit = document.getElementById("changePasswordSubmit");
+
+function clearChangePasswordForm() {
+  changePasswordFields.forEach((field) => { field.value = ""; });
+  changePasswordStatus.textContent = "";
+}
+
+function closeChangePasswordDialog() {
+  if (changePasswordDialog.open) changePasswordDialog.close();
+  clearChangePasswordForm();
+}
+
+changePasswordDialog.addEventListener("close", clearChangePasswordForm);
+document.getElementById("changePasswordCancel").addEventListener("click", closeChangePasswordDialog);
+
+changePasswordMenuItem.addEventListener("click", () => {
+  closeMenus();
+  if (vaultPanel.classList.contains("hidden")) return;
+  clearChangePasswordForm();
+  changePasswordDialog.showModal();
+  changePasswordFields[0].focus();
+});
+
+changePasswordForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const [current, next, confirmation] = changePasswordFields;
+  if (next.value !== confirmation.value) {
+    changePasswordStatus.textContent = "The new passwords do not match.";
+    confirmation.focus();
+    return;
+  }
+  withDisabled(changePasswordSubmit, async () => {
+    changePasswordStatus.textContent = "Changing the master password...";
+    const result = await window.electronAPI.changeMasterPassword(current.value, next.value, confirmation.value);
+    if (!changePasswordDialog.open) return;
+    if (!result.success) {
+      changePasswordStatus.textContent = result.error;
+      (result.error.includes("current master password") ? current : next).select();
+      return;
+    }
+    closeChangePasswordDialog();
+    setVaultStatus("Master password changed. Your previous backups still need the old password.");
   });
 });
 

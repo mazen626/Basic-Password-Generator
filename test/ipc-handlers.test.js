@@ -455,3 +455,31 @@ test('editing without a password or codes keeps the saved ones', async (t) => {
   assert.deepEqual((await h.invoke('vault:get-backup-codes', id)).codes.map((code) => code.code), ['code-one']);
   assert.equal((await h.invoke('vault:load-entries')).entries[0].notes, 'edited');
 });
+
+// --- Phase 1 milestone 1.4: change master password ---
+
+test('vault:change-master-password changes the password and drops any pending copy', async (t) => {
+  const { vault, vaultPath } = await createVault(t);
+  const h = harness(t, vault);
+  const { token } = await h.invoke('vault:confirm-copy-generated');
+
+  const result = await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password');
+  assert.equal(result.success, true);
+  assert.match(result.backupName, /^vault-backup-\d+-[0-9a-f-]{36}\.bak$/);
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', token), { success: false, error: 'Confirm the copy action first.' });
+
+  vault.lock();
+  await assert.rejects(vault.unlock(MASTER_PASSWORD), /Incorrect master password/);
+  await vault.unlock('a brand new master password');
+  assert.ok(vaultPath);
+});
+
+test('vault:change-master-password reports errors and refuses a locked vault', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+  assert.deepEqual(await h.invoke('vault:change-master-password', 'wrong password!', 'a brand new master password', 'a brand new master password'),
+    { success: false, error: 'The current master password is incorrect.' });
+  vault.lock();
+  assert.deepEqual(await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password'),
+    { success: false, error: 'Unlock the vault first.' });
+});

@@ -104,7 +104,7 @@ Both run from the File menu and only while the vault is unlocked. The page asks 
 5. **Backups are never pruned** and stay readable with the master password that was in use when they were created.
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
 7. **Permissions (fixed in Phase 1 milestone 1.1).** `denyAllPermissions` in `ipc-handlers.js` now denies every Electron permission request and check, such as camera, microphone and notifications. The app needs none of them.
-8. **No master-password change** and no iteration upgrade path for existing vaults.
+8. **Master-password change (fixed in Phase 1 milestone 1.4).** File > Change master password checks the current password, saves a byte-for-byte backup, then re-encrypts the vault with a fresh salt and 600,000 iterations, which also upgrades vaults created with fewer. A failure before the rename leaves the old vault and key in use. Backups made before the change still open only with the old password.
 9. **Plaintext CSV files.** An exported CSV, and a CSV that is imported but not deleted, hold every password unencrypted for as long as they exist. See [CSV import and export](#csv-import-and-export).
 
 ## Reporting

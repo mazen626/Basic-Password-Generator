@@ -73,9 +73,7 @@ class PasswordVault {
       throw error;
     }
 
-    const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
-    await fs.writeFile(path.join(path.dirname(this.filePath), backupName), contents, { flag: 'wx', mode: 0o600 });
-    return backupName;
+    return writeBackup(this.filePath, contents);
   }
 
   async unlock(masterPassword, confirmation) {
@@ -127,6 +125,61 @@ class PasswordVault {
 
     this.replaceKey(candidateKey);
     return { created: false, migrated };
+  }
+
+  // Re-encrypts the vault under a new master password, with a fresh salt and the current
+  // iteration count. The current password is checked first, and a byte-for-byte backup of the
+  // vault is saved before the rewrite. Any failure before the rename leaves the old vault and the
+  // old key in use. Backups made before the change still need the old password.
+  async changeMasterPassword(currentPassword, newPassword, confirmation) {
+    this.requireKey();
+    if (typeof currentPassword !== 'string' || currentPassword.length === 0 || currentPassword.length > MAX_MASTER_PASSWORD_LENGTH) {
+      throw new Error('Enter your current master password.');
+    }
+    validateMasterPassword(newPassword);
+    validateMasterPasswordConfirmation(newPassword, confirmation);
+    if (newPassword === currentPassword) {
+      throw new Error('The new master password must be different from the current one.');
+    }
+
+    return this.runWriteTransaction(async () => {
+      this.requireKey();
+      const contents = await fs.readFile(this.filePath, 'utf8');
+      if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) throw new Error('Vault file is too large.');
+      let envelope;
+      try {
+        envelope = validateEnvelope(JSON.parse(contents));
+      } catch {
+        throw new Error('Vault file is invalid or corrupted.');
+      }
+      if (envelope.version !== FORMAT_VERSION) throw new Error('Vault must be upgraded by unlocking again.');
+
+      const currentKey = await deriveKey(currentPassword, Buffer.from(envelope.salt, 'base64'), envelope.iterations);
+      let entries;
+      try {
+        entries = decryptEntries(envelope, currentKey);
+      } catch {
+        throw new Error('The current master password is incorrect.');
+      } finally {
+        currentKey.fill(0);
+      }
+
+      const backupName = await writeBackup(this.filePath, contents);
+      const salt = crypto.randomBytes(SALT_LENGTH);
+      const newKey = await deriveKey(newPassword, salt, PBKDF2_ITERATIONS);
+      try {
+        validateEntries(entries);
+        const newEnvelope = encryptEntries(entries, newKey, salt, PBKDF2_ITERATIONS);
+        validateEntries(decryptEntries(newEnvelope, newKey));
+        await writeVaultFile(this.filePath, newEnvelope);
+      } catch (error) {
+        newKey.fill(0);
+        throw error;
+      }
+
+      this.replaceKey(newKey);
+      return { backupName };
+    });
   }
 
   async initialize(masterPassword, confirmation) {
@@ -405,8 +458,15 @@ function mergeBackupCodes(currentCodes, codes) {
 
 async function backupLegacyVault(filePath, contents, version) {
   const backupPath = `${filePath}.v${version}-${Date.now()}-${crypto.randomUUID()}.bak`;
-  await fs.writeFile(backupPath, contents, { flag: 'wx', mode: 0o600 });
+  await writeAndFlush(backupPath, contents, 'wx');
   return backupPath;
+}
+
+// Saves an exact copy of the vault file next to it, flushed to disk, and returns its name.
+async function writeBackup(filePath, contents) {
+  const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
+  await writeAndFlush(path.join(path.dirname(filePath), backupName), contents, 'wx');
+  return backupName;
 }
 
 async function readVaultFile(filePath) {
@@ -442,10 +502,10 @@ async function writeVaultFile(filePath, envelope) {
 // Writes the file and flushes it to disk (FlushFileBuffers on Windows) before returning, so the
 // new vault is fully on disk before it replaces the old one. Windows cannot flush a folder, so a
 // power cut right after the rename can still lose the rename itself; the old vault then remains.
-async function writeAndFlush(filePath, contents) {
-  const handle = await fs.open(filePath, 'w', 0o600);
+async function writeAndFlush(filePath, contents, flag = 'w') {
+  const handle = await fs.open(filePath, flag, 0o600);
   try {
-    await handle.writeFile(contents, 'utf8');
+    await handle.writeFile(contents);
     await handle.sync();
   } finally {
     await handle.close();

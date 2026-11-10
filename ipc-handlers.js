@@ -301,6 +301,13 @@ function createIpcHandlers({
       return { success: true };
     });
 
+    registerVaultHandler('vault:change-master-password', async (currentPassword, newPassword, confirmation) => {
+      const { backupName } = await getVault().changeMasterPassword(currentPassword, newPassword, confirmation);
+      clearCopyConfirmation();
+      armIdleLock();
+      return { success: true, backupName };
+    });
+
     registerVaultHandler('vault:delete-entry', async (id) => {
       await getVault().deleteEntry(id);
       armIdleLock();

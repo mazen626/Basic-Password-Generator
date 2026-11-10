@@ -34,6 +34,7 @@ VLAUTR keeps your credentials on your own machine. Everything is encrypted with 
 
 **Encrypted vault**
 - Create a vault protected by a master password (8 to 1024 characters).
+- Change the master password from the File menu. An encrypted backup is saved first, and older backups keep needing the old password.
 - Store site, username, password, notes, category, and favorite status for each entry.
 - Paste an entry's backup codes in any layout. Each code gets its own checkbox, so you can track which ones are used.
 - Edit and delete entries; duplicate sites are rejected.

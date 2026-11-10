@@ -15,6 +15,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   copyGeneratedPassword: (text, token) => ipcRenderer.invoke('vault:copy-generated', text, token),
   revealPassword: (entryId) => ipcRenderer.invoke('vault:reveal-password', entryId),
   getBackupCodes: (entryId) => ipcRenderer.invoke('vault:get-backup-codes', entryId),
+  changeMasterPassword: (currentPassword, newPassword, confirmation) =>
+    ipcRenderer.invoke('vault:change-master-password', currentPassword, newPassword, confirmation),
   saveEntry: (entry) => ipcRenderer.invoke('vault:save-entry', entry),
   updateEntry: (id, entry) => ipcRenderer.invoke('vault:update-entry', id, entry),
   setBackupCodeUsed: (entryId, codeId, used) => ipcRenderer.invoke('vault:set-backup-code-used', entryId, codeId, used),

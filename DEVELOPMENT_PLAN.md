@@ -160,7 +160,7 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 ## Progress tracking
 
 - Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
-- Phase 1: **Next**, gated by approval of its security design.
+- Phase 1: **Implemented on the `phase-1-security` branch** (milestones 1.1 to 1.4); not yet merged into `main`.
 - Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.
