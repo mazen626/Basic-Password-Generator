@@ -3,8 +3,7 @@ const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { registerCsvHandlers } = require('../csv-transfer');
-const { buildVaultCsv } = require('../csv-export');
+const { registerCsvHandlers, buildVaultCsv } = require('../csv-transfer');
 const { createVault, makeEntry } = require('./helpers');
 
 const makeVault = createVault; // temp directory + unlocked vault, from test/helpers.js
