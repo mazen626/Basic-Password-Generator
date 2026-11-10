@@ -44,7 +44,7 @@ Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy
 
 | Process | Has access to | Notes |
 | --- | --- | --- |
-| Main (`main.js`, `vault.js`) | Derived key, vault file, clipboard, dialogs | All vault operations run through `registerVaultHandler`, which rejects calls from any frame other than the app's own `page.html` and serializes operations. |
+| Main (`main.js`, `ipc-handlers.js`, `vault.js`) | Derived key, vault file, clipboard, dialogs | All vault operations run through `registerVaultHandler` in `ipc-handlers.js`, which rejects calls from any frame other than the app's own `page.html` and serializes operations. Every Electron permission request and check is denied. `test/ipc-handlers.test.js` covers the caller checks, locked-vault calls, copy tokens, clipboard clearing, idle lock, menu actions and permissions. |
 | Preload (`preload.js`) | `ipcRenderer` | Exposes a fixed `window.electronAPI` surface only. |
 | Renderer (`renderer.js`, `page.html`) | Decrypted entries after unlock | `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`. The CSP allows only local scripts, styles, and fonts. Navigation and new windows are blocked. Entry data is rendered with `textContent`, never `innerHTML`. |
 
@@ -103,7 +103,7 @@ Both run from the File menu and only while the vault is unlocked. The page asks 
 4. **Write durability.** The temp-file-and-rename write does not `fsync` before renaming, so a power loss can still produce a truncated file. Phase 0 tests confirm that a truncated file is detected and never overwritten, but recovery is manual (restore a backup).
 5. **Backups are never pruned** and stay readable with the master password that was in use when they were created.
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
-7. **No permission request handler** is set on the Electron session (camera, notifications, and so on). The app never requests them, but nothing explicitly denies them.
+7. **Permissions (fixed in Phase 1 milestone 1.1).** `denyAllPermissions` in `ipc-handlers.js` now denies every Electron permission request and check, such as camera, microphone and notifications. The app needs none of them.
 8. **No master-password change** and no iteration upgrade path for existing vaults.
 9. **Plaintext CSV files.** An exported CSV, and a CSV that is imported but not deleted, hold every password unencrypted for as long as they exist. See [CSV import and export](#csv-import-and-export).
 

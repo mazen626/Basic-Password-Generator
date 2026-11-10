@@ -1,0 +1,314 @@
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const test = require('node:test');
+const { createIpcHandlers, denyAllPermissions, DEFAULTS } = require('../ipc-handlers');
+const { MASTER_PASSWORD, createVault, makeEntry } = require('./helpers');
+
+const PAGE_URL = 'file:///C:/app/page.html';
+const CSV_CHANNELS = ['vault:import-csv', 'vault:export-csv'];
+
+// Builds the real handlers around fake Electron objects. `answers` are the dialog buttons pressed, in order.
+function harness(t, vault, { answers = [] } = {}) {
+  const handlers = new Map();
+  const sent = [];
+  const calls = [];
+  const clipboard = {
+    text: '',
+    readText() { return this.text; },
+    writeText(value) { this.text = value; },
+    clear() { this.text = ''; }
+  };
+  const frame = { url: PAGE_URL };
+  const contents = {
+    mainFrame: frame,
+    zoom: 0,
+    getZoomLevel() { return this.zoom; },
+    setZoomLevel(level) { this.zoom = level; }
+  };
+  ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll'].forEach((name) => { contents[name] = () => calls.push(name); });
+  const win = {
+    fullScreen: false,
+    isDestroyed: () => false,
+    isFullScreen() { return this.fullScreen; },
+    setFullScreen(value) { this.fullScreen = value; },
+    minimize: () => calls.push('minimize'),
+    webContents: { send: (channel) => sent.push(channel) }
+  };
+  const dialogs = [];
+
+  const ipc = createIpcHandlers({
+    ipcMain: {
+      handle(channel, handler) {
+        if (handlers.has(channel)) throw new Error(`${channel} registered twice`);
+        handlers.set(channel, handler);
+      }
+    },
+    getVault: () => vault,
+    pageUrl: PAGE_URL,
+    clipboard,
+    dialog: {
+      showMessageBox: async (parent, options) => {
+        dialogs.push(options);
+        return { response: answers.length ? answers.shift() : 0 };
+      }
+    },
+    shell: { openPath: async () => '' },
+    getFocusedWindow: () => win,
+    getAllWindows: () => [win],
+    getWindowFor: () => win,
+    quit: () => calls.push('quit')
+  });
+  ipc.registerAll();
+  // Clear the idle-lock, copy-token and clipboard timers so they do not keep the test process alive.
+  t.after(() => ipc.shutDown({ clearClipboard: true }));
+
+  const trusted = { senderFrame: frame, sender: contents };
+  const invoke = (channel, ...args) => handlers.get(channel)(trusted, ...args);
+  const invokeAs = (event, channel, ...args) => handlers.get(channel)(event, ...args);
+  return { ipc, handlers, invoke, invokeAs, clipboard, contents, win, sent, calls, dialogs, frame };
+}
+
+test('registered channels plus CSV match exactly what preload.js calls', async (t) => {
+  const { vault } = await createVault(t);
+  const { handlers } = harness(t, vault);
+  const preload = fs.readFileSync(path.join(__dirname, '..', 'preload.js'), 'utf8');
+  const invoked = [...preload.matchAll(/ipcRenderer\.invoke\('([^']+)'/g)].map((m) => m[1]).sort();
+  assert.deepEqual([...handlers.keys(), ...CSV_CHANNELS].sort(), invoked);
+});
+
+test('every channel rejects callers that are not the app page', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry());
+  const h = harness(t, vault);
+  const subframe = { url: PAGE_URL };
+  const untrusted = [
+    ['no sender frame', { sender: h.contents }],
+    ['a subframe', { senderFrame: subframe, sender: h.contents }],
+    ['another file', { senderFrame: { url: 'file:///C:/evil.html' }, sender: { mainFrame: { url: 'file:///C:/evil.html' } } }],
+    ['a website', { senderFrame: { url: 'https://example.com/' }, sender: { mainFrame: { url: 'https://example.com/' } } }]
+  ];
+  untrusted[2][1].sender.mainFrame = untrusted[2][1].senderFrame;
+  untrusted[3][1].sender.mainFrame = untrusted[3][1].senderFrame;
+
+  for (const [label, event] of untrusted) {
+    for (const channel of h.handlers.keys()) {
+      const result = await h.invokeAs(event, channel, 'quit');
+      assert.deepEqual(result, { success: false, error: 'Unauthorized caller.' }, `${channel} from ${label}`);
+    }
+  }
+  assert.equal(vault.isUnlocked(), true, 'vault:lock from an untrusted caller must not lock');
+  assert.equal(h.dialogs.length, 0, 'no dialog may open for an untrusted caller');
+  assert.deepEqual(h.calls, [], 'no menu action or quit may run for an untrusted caller');
+  assert.equal((await vault.loadEntries()).length, 1, 'no entry may change');
+});
+
+test('errors are returned as results, not thrown', async (t) => {
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+  assert.deepEqual(await h.invoke('vault:load-entries'), { success: false, error: 'Unlock the vault first.' });
+  assert.deepEqual(await h.invoke('vault:delete-entry', 'not-an-id'), { success: false, error: 'Invalid entry id.' });
+});
+
+test('a failed call does not block the calls queued after it', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+  const results = await Promise.all([
+    h.invoke('vault:save-entry', makeEntry({ site: 'a.example' })),
+    h.invoke('vault:save-entry', { site: '' }),
+    h.invoke('vault:save-entry', makeEntry({ site: 'b.example' })),
+    h.invoke('vault:load-entries')
+  ]);
+  assert.equal(results[0].success, true);
+  assert.equal(results[1].success, false);
+  assert.equal(results[2].success, true);
+  assert.deepEqual(results[3].entries.map((entry) => entry.site).sort(), ['a.example', 'b.example']);
+});
+
+test('copying is refused while the vault is locked, without opening a dialog', async (t) => {
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+  assert.deepEqual(await h.invoke('vault:confirm-copy'), { success: false, error: 'Unlock the vault first.' });
+  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', 'any-token'), { success: false, error: 'Unlock the vault first.' });
+  assert.equal(h.dialogs.length, 0);
+  assert.equal(h.clipboard.text, '');
+});
+
+test('a copy needs a confirmed token, and each token works once', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', undefined), { success: false, error: 'Confirm the copy action first.' });
+  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', 'made-up'), { success: false, error: 'Confirm the copy action first.' });
+  assert.equal(h.clipboard.text, '');
+
+  const { token } = await h.invoke('vault:confirm-copy');
+  assert.equal(h.dialogs[0].message, 'Copy this password to the system clipboard?');
+  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', token), { success: true });
+  assert.equal(h.clipboard.text, 'secret');
+  assert.deepEqual(await h.invoke('vault:copy-password', 'other', token), { success: false, error: 'Confirm the copy action first.' });
+  assert.equal(h.clipboard.text, 'secret');
+});
+
+test('cancelling the dialog gives no token, and a new confirmation replaces the old token', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault, { answers: [1, 0, 0] });
+
+  assert.deepEqual(await h.invoke('vault:confirm-copy'), { success: false, cancelled: true });
+  const first = await h.invoke('vault:confirm-copy');
+  const second = await h.invoke('vault:confirm-copy');
+  assert.notEqual(first.token, second.token);
+  assert.equal((await h.invoke('vault:copy-password', 'secret', first.token)).success, false);
+  assert.equal((await h.invoke('vault:copy-password', 'secret', second.token)).success, true);
+});
+
+test('a copy token expires after 30 seconds, and locking drops it', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  const expiring = await h.invoke('vault:confirm-copy');
+  t.mock.timers.tick(DEFAULTS.copyTokenMs);
+  assert.equal((await h.invoke('vault:copy-password', 'secret', expiring.token)).success, false);
+
+  const dropped = await h.invoke('vault:confirm-copy');
+  await h.invoke('vault:lock');
+  await vault.unlock(MASTER_PASSWORD);
+  assert.equal((await h.invoke('vault:copy-password', 'secret', dropped.token)).success, false);
+  assert.equal(h.clipboard.text, '');
+});
+
+test('copy rejects passwords that are not 1 to 4096 characters of text', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+  for (const bad of ['', 'x'.repeat(4097), 42, null, { toString: () => 'secret' }]) {
+    const { token } = await h.invoke('vault:confirm-copy');
+    assert.deepEqual(await h.invoke('vault:copy-password', bad, token), { success: false, error: 'Password must contain 1 to 4096 characters.' });
+  }
+  assert.equal(h.clipboard.text, '');
+});
+
+test('the clipboard clears after 10 seconds only if it still holds the copied password', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  await h.invoke('vault:copy-password', 'first-secret', (await h.invoke('vault:confirm-copy')).token);
+  t.mock.timers.tick(DEFAULTS.clipboardClearMs - 1);
+  assert.equal(h.clipboard.text, 'first-secret');
+  t.mock.timers.tick(1);
+  assert.equal(h.clipboard.text, '');
+
+  await h.invoke('vault:copy-password', 'second-secret', (await h.invoke('vault:confirm-copy')).token);
+  h.clipboard.text = 'something the user copied';
+  t.mock.timers.tick(DEFAULTS.clipboardClearMs);
+  assert.equal(h.clipboard.text, 'something the user copied');
+});
+
+test('a second copy restarts the 10-second clear for the new password', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  await h.invoke('vault:copy-password', 'one', (await h.invoke('vault:confirm-copy')).token);
+  t.mock.timers.tick(6000);
+  await h.invoke('vault:copy-password', 'two', (await h.invoke('vault:confirm-copy')).token);
+  t.mock.timers.tick(6000);
+  assert.equal(h.clipboard.text, 'two');
+  t.mock.timers.tick(4000);
+  assert.equal(h.clipboard.text, '');
+});
+
+test('the vault locks after 5 minutes idle and tells the window', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+
+  assert.equal((await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD)).success, true);
+  t.mock.timers.tick(DEFAULTS.idleLockMs - 1);
+  assert.equal(vault.isUnlocked(), true);
+  t.mock.timers.tick(1);
+  assert.equal(vault.isUnlocked(), false);
+  assert.deepEqual(h.sent, ['vault:auto-locked']);
+});
+
+test('activity postpones the idle lock', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+
+  await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD);
+  t.mock.timers.tick(4 * 60 * 1000);
+  await h.invoke('vault:activity');
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal(vault.isUnlocked(), true);
+  t.mock.timers.tick(60 * 1000);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('resuming the computer locks a vault that has been idle too long', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+
+  await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD);
+  t.mock.timers.setTime(Date.now() + DEFAULTS.idleLockMs + 1);
+  h.ipc.lockIfIdle();
+  assert.equal(vault.isUnlocked(), false);
+  assert.deepEqual(h.sent, ['vault:auto-locked']);
+
+  h.ipc.lockIfIdle();
+  assert.deepEqual(h.sent, ['vault:auto-locked'], 'an already locked vault sends nothing');
+});
+
+test('shutting down locks the vault and, on quit, clears a copied password', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  const { token } = await h.invoke('vault:confirm-copy');
+  h.ipc.shutDown();
+  assert.equal(vault.isUnlocked(), false);
+  await vault.unlock(MASTER_PASSWORD);
+  assert.equal((await h.invoke('vault:copy-password', 'secret', token)).success, false);
+
+  await h.invoke('vault:copy-password', 'secret', (await h.invoke('vault:confirm-copy')).token);
+  h.ipc.shutDown({ clearClipboard: true });
+  assert.equal(h.clipboard.text, '');
+});
+
+test('menu actions run only known actions and keep zoom within limits', async (t) => {
+  const { vault } = await createVault(t);
+  const h = harness(t, vault);
+
+  for (const action of ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll', 'minimize', 'quit']) {
+    assert.deepEqual(await h.invoke('window:menu-action', action), { success: true });
+  }
+  assert.deepEqual(h.calls, ['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll', 'minimize', 'quit']);
+
+  for (let i = 0; i < 10; i += 1) await h.invoke('window:menu-action', 'zoomIn');
+  assert.equal(h.contents.zoom, 3);
+  for (let i = 0; i < 20; i += 1) await h.invoke('window:menu-action', 'zoomOut');
+  assert.equal(h.contents.zoom, -3);
+  await h.invoke('window:menu-action', 'resetZoom');
+  assert.equal(h.contents.zoom, 0);
+  await h.invoke('window:menu-action', 'toggleFullScreen');
+  assert.equal(h.win.fullScreen, true);
+
+  for (const bad of ['reload', 'openDevTools', 'constructor', '__proto__', '', null]) {
+    assert.deepEqual(await h.invoke('window:menu-action', bad), { success: false, error: 'Unknown menu action.' });
+  }
+});
+
+test('every Electron permission request and check is denied', () => {
+  const session = {};
+  session.setPermissionRequestHandler = (handler) => { session.request = handler; };
+  session.setPermissionCheckHandler = (handler) => { session.check = handler; };
+  denyAllPermissions(session);
+
+  for (const permission of ['media', 'notifications', 'geolocation', 'clipboard-read', 'clipboard-sanitized-write', 'fullscreen', 'openExternal']) {
+    let granted;
+    session.request(null, permission, (value) => { granted = value; });
+    assert.equal(granted, false, `${permission} request`);
+    assert.equal(session.check(null, permission), false, `${permission} check`);
+  }
+});
