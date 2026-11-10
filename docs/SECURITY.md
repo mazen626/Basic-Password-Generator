@@ -1,6 +1,6 @@
 # VLAUTR Security Model
 
-This document describes how VLAUTR protects vault data today: what it guarantees, what it doesn't, and the known gaps scheduled for Phase 1. It reflects the code as of Phase 0 (`vault.js`, `main.js`, `preload.js`, `renderer.js`, `page.html`).
+This document describes how VLAUTR protects vault data today: what it guarantees, what it doesn't, and the known gaps scheduled for Phase 1. It reflects the code as of Phase 1 (`vault.js`, `ipc-handlers.js`, `main.js`, `preload.js`, `renderer.js`, `page.html`).
 
 ## Summary
 

@@ -4,7 +4,7 @@
 
 VLAUTR is an offline-first Windows desktop password manager. Its order of priorities is security and data integrity first, useful vault capabilities second, and visual refinement alongside them. Preserve the dark-purple palette and IBM Plex typography. Core use must work without network access. Optional encrypted synchronization is a later, separately designed capability; no server may receive plaintext vault contents or the master password.
 
-This plan is based on the project technical report and the current Phase 0 results in [`docs/PHASE-0-BASELINE.md`](docs/PHASE-0-BASELINE.md). Phase 0 is complete: the owner accepted its completion report ([`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md)) on 2026-11-08. **Do not reassign or restart Phase 0.** Phase 1 is next.
+This plan is based on the project technical report and the current Phase 0 results in [`docs/PHASE-0-BASELINE.md`](docs/PHASE-0-BASELINE.md). Phase 0 is complete: the owner accepted its completion report ([`docs/PHASE-0-REPORT.md`](docs/PHASE-0-REPORT.md)) on 2026-11-08. **Do not reassign or restart Phase 0.** Phase 1 is complete (merged 2026-11-10). Phase 2A is next.
 
 ## Current baseline and constraints
 
@@ -160,7 +160,7 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 ## Progress tracking
 
 - Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
-- Phase 1: **Implemented on the `phase-1-security` branch** (milestones 1.1 to 1.4); not yet merged into `main`.
+- Phase 1: **Complete** (merged into `main` 2026-11-10 in PR #11, version 1.3.1); see `docs/PHASE-1-DESIGN.md`. Milestones 1.1 to 1.4 are implemented, the acceptance criteria were checked against the code and `docs/SECURITY.md`, and `npm test` passes (143 tests). Carried forward, as listed in `docs/SECURITY.md`: the master password still crosses IPC as a string, revealed values stay in renderer memory until garbage collected, Windows can't flush the vault folder after the rename, and backups are never pruned and keep opening with the password in use when they were made (Phase 2A).
 - Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.
