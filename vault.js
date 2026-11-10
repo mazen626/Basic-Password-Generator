@@ -431,11 +431,24 @@ async function writeVaultFile(filePath, envelope) {
     if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
       throw new Error('Vault has reached its maximum file size.');
     }
-    await fs.writeFile(temporaryPath, contents, { mode: 0o600 });
+    await writeAndFlush(temporaryPath, contents);
     await fs.rename(temporaryPath, filePath);
   } catch (error) {
     await fs.rm(temporaryPath, { force: true }).catch(() => {});
     throw error;
+  }
+}
+
+// Writes the file and flushes it to disk (FlushFileBuffers on Windows) before returning, so the
+// new vault is fully on disk before it replaces the old one. Windows cannot flush a folder, so a
+// power cut right after the rename can still lose the rename itself; the old vault then remains.
+async function writeAndFlush(filePath, contents) {
+  const handle = await fs.open(filePath, 'w', 0o600);
+  try {
+    await handle.writeFile(contents, 'utf8');
+    await handle.sync();
+  } finally {
+    await handle.close();
   }
 }
 
