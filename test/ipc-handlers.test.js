@@ -128,8 +128,8 @@ test('a failed call does not block the calls queued after it', async (t) => {
 test('copying is refused while the vault is locked, without opening a dialog', async (t) => {
   const { vault } = await createVault(t, { unlocked: false });
   const h = harness(t, vault);
-  assert.deepEqual(await h.invoke('vault:confirm-copy'), { success: false, error: 'Unlock the vault first.' });
-  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', 'any-token'), { success: false, error: 'Unlock the vault first.' });
+  assert.deepEqual(await h.invoke('vault:confirm-copy-generated'), { success: false, error: 'Unlock the vault first.' });
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', 'any-token'), { success: false, error: 'Unlock the vault first.' });
   assert.equal(h.dialogs.length, 0);
   assert.equal(h.clipboard.text, '');
 });
@@ -138,15 +138,15 @@ test('a copy needs a confirmed token, and each token works once', async (t) => {
   const { vault } = await createVault(t);
   const h = harness(t, vault);
 
-  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', undefined), { success: false, error: 'Confirm the copy action first.' });
-  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', 'made-up'), { success: false, error: 'Confirm the copy action first.' });
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', undefined), { success: false, error: 'Confirm the copy action first.' });
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', 'made-up'), { success: false, error: 'Confirm the copy action first.' });
   assert.equal(h.clipboard.text, '');
 
-  const { token } = await h.invoke('vault:confirm-copy');
-  assert.equal(h.dialogs[0].message, 'Copy this password to the system clipboard?');
-  assert.deepEqual(await h.invoke('vault:copy-password', 'secret', token), { success: true });
+  const { token } = await h.invoke('vault:confirm-copy-generated');
+  assert.equal(h.dialogs[0].message, 'Copy this generated password to the system clipboard?');
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', token), { success: true });
   assert.equal(h.clipboard.text, 'secret');
-  assert.deepEqual(await h.invoke('vault:copy-password', 'other', token), { success: false, error: 'Confirm the copy action first.' });
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'other', token), { success: false, error: 'Confirm the copy action first.' });
   assert.equal(h.clipboard.text, 'secret');
 });
 
@@ -154,12 +154,12 @@ test('cancelling the dialog gives no token, and a new confirmation replaces the 
   const { vault } = await createVault(t);
   const h = harness(t, vault, { answers: [1, 0, 0] });
 
-  assert.deepEqual(await h.invoke('vault:confirm-copy'), { success: false, cancelled: true });
-  const first = await h.invoke('vault:confirm-copy');
-  const second = await h.invoke('vault:confirm-copy');
+  assert.deepEqual(await h.invoke('vault:confirm-copy-generated'), { success: false, cancelled: true });
+  const first = await h.invoke('vault:confirm-copy-generated');
+  const second = await h.invoke('vault:confirm-copy-generated');
   assert.notEqual(first.token, second.token);
-  assert.equal((await h.invoke('vault:copy-password', 'secret', first.token)).success, false);
-  assert.equal((await h.invoke('vault:copy-password', 'secret', second.token)).success, true);
+  assert.equal((await h.invoke('vault:copy-generated', 'secret', first.token)).success, false);
+  assert.equal((await h.invoke('vault:copy-generated', 'secret', second.token)).success, true);
 });
 
 test('a copy token expires after 30 seconds, and locking drops it', async (t) => {
@@ -167,14 +167,14 @@ test('a copy token expires after 30 seconds, and locking drops it', async (t) =>
   const { vault } = await createVault(t);
   const h = harness(t, vault);
 
-  const expiring = await h.invoke('vault:confirm-copy');
+  const expiring = await h.invoke('vault:confirm-copy-generated');
   t.mock.timers.tick(DEFAULTS.copyTokenMs);
-  assert.equal((await h.invoke('vault:copy-password', 'secret', expiring.token)).success, false);
+  assert.equal((await h.invoke('vault:copy-generated', 'secret', expiring.token)).success, false);
 
-  const dropped = await h.invoke('vault:confirm-copy');
+  const dropped = await h.invoke('vault:confirm-copy-generated');
   await h.invoke('vault:lock');
   await vault.unlock(MASTER_PASSWORD);
-  assert.equal((await h.invoke('vault:copy-password', 'secret', dropped.token)).success, false);
+  assert.equal((await h.invoke('vault:copy-generated', 'secret', dropped.token)).success, false);
   assert.equal(h.clipboard.text, '');
 });
 
@@ -182,8 +182,8 @@ test('copy rejects passwords that are not 1 to 4096 characters of text', async (
   const { vault } = await createVault(t);
   const h = harness(t, vault);
   for (const bad of ['', 'x'.repeat(4097), 42, null, { toString: () => 'secret' }]) {
-    const { token } = await h.invoke('vault:confirm-copy');
-    assert.deepEqual(await h.invoke('vault:copy-password', bad, token), { success: false, error: 'Password must contain 1 to 4096 characters.' });
+    const { token } = await h.invoke('vault:confirm-copy-generated');
+    assert.deepEqual(await h.invoke('vault:copy-generated', bad, token), { success: false, error: 'Password must contain 1 to 4096 characters.' });
   }
   assert.equal(h.clipboard.text, '');
 });
@@ -193,13 +193,13 @@ test('the clipboard clears after 10 seconds only if it still holds the copied pa
   const { vault } = await createVault(t);
   const h = harness(t, vault);
 
-  await h.invoke('vault:copy-password', 'first-secret', (await h.invoke('vault:confirm-copy')).token);
+  await h.invoke('vault:copy-generated', 'first-secret', (await h.invoke('vault:confirm-copy-generated')).token);
   t.mock.timers.tick(DEFAULTS.clipboardClearMs - 1);
   assert.equal(h.clipboard.text, 'first-secret');
   t.mock.timers.tick(1);
   assert.equal(h.clipboard.text, '');
 
-  await h.invoke('vault:copy-password', 'second-secret', (await h.invoke('vault:confirm-copy')).token);
+  await h.invoke('vault:copy-generated', 'second-secret', (await h.invoke('vault:confirm-copy-generated')).token);
   h.clipboard.text = 'something the user copied';
   t.mock.timers.tick(DEFAULTS.clipboardClearMs);
   assert.equal(h.clipboard.text, 'something the user copied');
@@ -210,9 +210,9 @@ test('a second copy restarts the 10-second clear for the new password', async (t
   const { vault } = await createVault(t);
   const h = harness(t, vault);
 
-  await h.invoke('vault:copy-password', 'one', (await h.invoke('vault:confirm-copy')).token);
+  await h.invoke('vault:copy-generated', 'one', (await h.invoke('vault:confirm-copy-generated')).token);
   t.mock.timers.tick(6000);
-  await h.invoke('vault:copy-password', 'two', (await h.invoke('vault:confirm-copy')).token);
+  await h.invoke('vault:copy-generated', 'two', (await h.invoke('vault:confirm-copy-generated')).token);
   t.mock.timers.tick(6000);
   assert.equal(h.clipboard.text, 'two');
   t.mock.timers.tick(4000);
@@ -265,13 +265,13 @@ test('shutting down locks the vault and, on quit, clears a copied password', asy
   const { vault } = await createVault(t);
   const h = harness(t, vault);
 
-  const { token } = await h.invoke('vault:confirm-copy');
+  const { token } = await h.invoke('vault:confirm-copy-generated');
   h.ipc.shutDown();
   assert.equal(vault.isUnlocked(), false);
   await vault.unlock(MASTER_PASSWORD);
-  assert.equal((await h.invoke('vault:copy-password', 'secret', token)).success, false);
+  assert.equal((await h.invoke('vault:copy-generated', 'secret', token)).success, false);
 
-  await h.invoke('vault:copy-password', 'secret', (await h.invoke('vault:confirm-copy')).token);
+  await h.invoke('vault:copy-generated', 'secret', (await h.invoke('vault:confirm-copy-generated')).token);
   h.ipc.shutDown({ clearClipboard: true });
   assert.equal(h.clipboard.text, '');
 });
@@ -311,4 +311,147 @@ test('every Electron permission request and check is denied', () => {
     assert.equal(granted, false, `${permission} request`);
     assert.equal(session.check(null, permission), false, `${permission} check`);
   }
+});
+
+// --- Phase 1 milestone 1.2: the window gets metadata only, and secrets one entry at a time ---
+
+function findKeys(value, names, found = []) {
+  if (Array.isArray(value)) value.forEach((item) => findKeys(item, names, found));
+  else if (value && typeof value === 'object') {
+    Object.entries(value).forEach(([key, child]) => {
+      if (names.includes(key)) found.push(key);
+      findKeys(child, names, found);
+    });
+  }
+  return found;
+}
+
+async function savedEntryIds(vault) {
+  const entries = await vault.loadEntries();
+  return Object.fromEntries(entries.map((entry) => [entry.site, entry.id]));
+}
+
+test('vault:load-entries sends no passwords or backup codes, only counts', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example', password: 'pw-alpha-123', backupCodes: ['code-one', 'code-two'] }));
+  await vault.saveEntry(makeEntry({ site: 'b.example', password: 'pw-beta-456' }));
+  const ids = await savedEntryIds(vault);
+  const firstCode = (await vault.getBackupCodes(ids['a.example']))[0];
+  await vault.setBackupCodeUsed(ids['a.example'], firstCode.id, true);
+  const h = harness(t, vault);
+
+  const result = await h.invoke('vault:load-entries');
+  assert.equal(result.success, true);
+  assert.deepEqual(findKeys(result, ['password', 'code', 'codes']), []);
+  const text = JSON.stringify(result);
+  for (const secret of ['pw-alpha-123', 'pw-beta-456', 'code-one', 'code-two']) assert.equal(text.includes(secret), false, secret);
+
+  const a = result.entries.find((entry) => entry.site === 'a.example');
+  assert.equal(a.hasPassword, true);
+  assert.deepEqual(a.backupCodes, { total: 2, unused: 1 });
+  assert.deepEqual(result.entries.find((entry) => entry.site === 'b.example').backupCodes, { total: 0, unused: 0 });
+});
+
+test('vault:reveal-password returns one entry\'s password, and only while unlocked', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example', password: 'pw-alpha-123' }));
+  const { 'a.example': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+
+  assert.deepEqual(await h.invoke('vault:reveal-password', id), { success: true, password: 'pw-alpha-123' });
+  assert.deepEqual(await h.invoke('vault:reveal-password', 'not-an-id'), { success: false, error: 'Invalid entry id.' });
+  assert.deepEqual(await h.invoke('vault:reveal-password', '00000000-0000-4000-8000-000000000000'), { success: false, error: 'Entry not found.' });
+  vault.lock();
+  assert.deepEqual(await h.invoke('vault:reveal-password', id), { success: false, error: 'Unlock the vault first.' });
+});
+
+test('vault:get-backup-codes returns one entry\'s codes, and only while unlocked', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example', backupCodes: ['code-one', 'code-two'] }));
+  const { 'a.example': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+
+  const result = await h.invoke('vault:get-backup-codes', id);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.codes.map(({ code, used }) => [code, used]), [['code-one', false], ['code-two', false]]);
+  assert.deepEqual(Object.keys(result.codes[0]).sort(), ['code', 'id', 'used']);
+  vault.lock();
+  assert.deepEqual(await h.invoke('vault:get-backup-codes', id), { success: false, error: 'Unlock the vault first.' });
+});
+
+test('copying an entry names its site, then copies that entry\'s password from the vault', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'github.com', password: 'pw-github-789' }));
+  const { 'github.com': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+
+  const { token } = await h.invoke('vault:confirm-copy-entry', id);
+  assert.equal(h.dialogs[0].message, 'Copy the password for github.com?');
+  assert.deepEqual(await h.invoke('vault:copy-entry-password', id, token), { success: true });
+  assert.equal(h.clipboard.text, 'pw-github-789');
+  assert.equal((await h.invoke('vault:copy-entry-password', id, token)).success, false, 'tokens work once');
+
+  t.mock.timers.tick(DEFAULTS.clipboardClearMs);
+  assert.equal(h.clipboard.text, '');
+});
+
+test('a copy token only works for the entry, or the generator, it was confirmed for', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example', password: 'pw-alpha-123' }));
+  await vault.saveEntry(makeEntry({ site: 'b.example', password: 'pw-beta-456' }));
+  const ids = await savedEntryIds(vault);
+  const h = harness(t, vault);
+  const refused = { success: false, error: 'Confirm the copy action first.' };
+
+  const forA = (await h.invoke('vault:confirm-copy-entry', ids['a.example'])).token;
+  assert.deepEqual(await h.invoke('vault:copy-entry-password', ids['b.example'], forA), refused);
+  assert.deepEqual(await h.invoke('vault:copy-generated', 'anything', forA), refused);
+
+  const forGenerator = (await h.invoke('vault:confirm-copy-generated')).token;
+  assert.deepEqual(await h.invoke('vault:copy-entry-password', ids['a.example'], forGenerator), refused);
+
+  assert.deepEqual(await h.invoke('vault:copy-entry-password', ids['a.example'], undefined), refused);
+  assert.equal(h.clipboard.text, '');
+});
+
+test('confirming a copy for a missing, malformed or locked entry opens no dialog', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example' }));
+  const { 'a.example': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+
+  assert.deepEqual(await h.invoke('vault:confirm-copy-entry', '00000000-0000-4000-8000-000000000000'), { success: false, error: 'Entry not found.' });
+  assert.deepEqual(await h.invoke('vault:confirm-copy-entry', 'not-an-id'), { success: false, error: 'Invalid entry id.' });
+  vault.lock();
+  assert.deepEqual(await h.invoke('vault:confirm-copy-entry', id), { success: false, error: 'Unlock the vault first.' });
+  assert.equal(h.dialogs.length, 0);
+});
+
+test('no copy token is issued if the vault locks while the dialog is open', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example' }));
+  const { 'a.example': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+  // The fake dialog records each dialog it opens. Lock the vault at that moment, as the idle lock would.
+  h.dialogs.push = function push(options) {
+    vault.lock();
+    return Array.prototype.push.call(this, options);
+  };
+
+  assert.deepEqual(await h.invoke('vault:confirm-copy-entry', id), { success: false, error: 'Unlock the vault first.' });
+  assert.equal(h.dialogs.length, 1);
+});
+
+test('editing without a password or codes keeps the saved ones', async (t) => {
+  const { vault } = await createVault(t);
+  await vault.saveEntry(makeEntry({ site: 'a.example', password: 'pw-alpha-123', backupCodes: ['code-one'] }));
+  const { 'a.example': id } = await savedEntryIds(vault);
+  const h = harness(t, vault);
+
+  const { password: _password, backupCodes: _codes, ...withoutSecrets } = makeEntry({ site: 'a.example', notes: 'edited' });
+  assert.deepEqual(await h.invoke('vault:update-entry', id, withoutSecrets), { success: true });
+  assert.deepEqual(await h.invoke('vault:reveal-password', id), { success: true, password: 'pw-alpha-123' });
+  assert.deepEqual((await h.invoke('vault:get-backup-codes', id)).codes.map((code) => code.code), ['code-one']);
+  assert.equal((await h.invoke('vault:load-entries')).entries[0].notes, 'edited');
 });

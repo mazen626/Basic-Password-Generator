@@ -157,6 +157,30 @@ class PasswordVault {
     return entries;
   }
 
+  // What the window gets at load: everything except passwords and backup code values.
+  async loadEntrySummaries() {
+    return (await this.loadEntries()).map(summarizeEntry);
+  }
+
+  async findEntry(id) {
+    validateEntryId(id);
+    const entry = (await this.loadEntries()).find((savedEntry) => savedEntry.id === id);
+    if (!entry) throw new Error('Entry not found.');
+    return entry;
+  }
+
+  async getEntrySite(id) {
+    return (await this.findEntry(id)).site;
+  }
+
+  async getEntryPassword(id) {
+    return (await this.findEntry(id)).password;
+  }
+
+  async getBackupCodes(id) {
+    return (await this.findEntry(id)).backupCodes.map(({ id: codeId, code, used }) => ({ id: codeId, code, used }));
+  }
+
   async saveEntry(entry) {
     validateEntry(entry);
     return this.runWriteTransaction(async () => {
@@ -184,8 +208,10 @@ class PasswordVault {
     });
   }
 
+  // Leaving out `password` or `backupCodes` keeps the saved value, so the window can edit
+  // an entry without first loading its secrets.
   async updateEntry(id, entry) {
-    validateEntry(entry);
+    validateEntryUpdate(entry);
     validateEntryId(id);
     return this.runWriteTransaction(async () => {
       const key = this.requireKey();
@@ -196,17 +222,19 @@ class PasswordVault {
       ensureUniqueSite(entries, entry.site, id);
 
       const current = entries[index];
+      const password = Object.hasOwn(entry, 'password') ? entry.password : current.password;
+      const codes = Object.hasOwn(entry, 'backupCodes') ? entry.backupCodes : current.backupCodes.map((saved) => saved.code);
       entries[index] = {
         id,
         site: entry.site.trim(),
         username: entry.username,
-        password: entry.password,
+        password,
         notes: entry.notes,
         category: entry.category,
         favorite: entry.favorite,
-        backupCodes: mergeBackupCodes(current.backupCodes, entry.backupCodes),
+        backupCodes: mergeBackupCodes(current.backupCodes, codes),
         createdAt: current.createdAt,
-        updatedAt: entry.password === current.password ? current.updatedAt : new Date().toISOString()
+        updatedAt: password === current.password ? current.updatedAt : new Date().toISOString()
       };
 
       await this.persistEntries(entries, key, envelope);
@@ -349,6 +377,24 @@ function migrateEntries(entries) {
   });
 }
 
+function summarizeEntry(entry) {
+  return {
+    id: entry.id,
+    site: entry.site,
+    username: entry.username,
+    notes: entry.notes,
+    category: entry.category,
+    favorite: entry.favorite,
+    createdAt: entry.createdAt,
+    updatedAt: entry.updatedAt,
+    hasPassword: entry.password.length > 0,
+    backupCodes: {
+      total: entry.backupCodes.length,
+      unused: entry.backupCodes.filter((code) => !code.used).length
+    }
+  };
+}
+
 function createBackupCode(code) {
   return { id: crypto.randomUUID(), code, used: false };
 }
@@ -461,6 +507,18 @@ function validateEntry(entry) {
     throw new Error('Favorite must be true or false.');
   }
   validateBackupCodes(entry.backupCodes);
+}
+
+function validateEntryUpdate(entry) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
+    throw new Error('Entry must include site, username, password, notes, category, favorite, and backup codes.');
+  }
+  // Check the fields that were sent; an omitted password or code list is filled in from the saved entry.
+  validateEntry({
+    ...entry,
+    password: Object.hasOwn(entry, 'password') ? entry.password : 'unchanged',
+    backupCodes: Object.hasOwn(entry, 'backupCodes') ? entry.backupCodes : []
+  });
 }
 
 function validateBackupCodes(codes) {

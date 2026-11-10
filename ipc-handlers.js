@@ -12,6 +12,9 @@ const DEFAULTS = {
   zoomStep: 0.5
 };
 const EDIT_ACTIONS = new Set(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']);
+// Copy tokens are tied to one entry ID, or to this marker for the generator's password.
+const GENERATED = Symbol('generated password');
+const COPY_DETAIL = 'Other apps or clipboard history may capture it. The clipboard is temporary, not secure storage.';
 
 function createIpcHandlers({
   ipcMain,
@@ -32,7 +35,7 @@ function createIpcHandlers({
   let lastActivityAt = 0;
   let clipboardClearTimer = null;
   let copiedPasswordDigest;
-  let pendingCopyToken;
+  let pendingCopy;
   let copyTokenTimer = null;
 
   function serializeVaultOperation(operation) {
@@ -111,11 +114,15 @@ function createIpcHandlers({
   function clearCopyConfirmation() {
     if (copyTokenTimer) clearTimeout(copyTokenTimer);
     copyTokenTimer = null;
-    pendingCopyToken = undefined;
+    pendingCopy = undefined;
   }
 
-  async function confirmPasswordCopy() {
+  function requireUnlocked() {
     if (!isUnlocked()) throw new Error('Unlock the vault first.');
+  }
+
+  // Shows the native confirmation and, if accepted, issues a one-time token for `target`.
+  async function confirmCopy(target, message) {
     clearCopyConfirmation();
     const confirmation = await dialog.showMessageBox(getFocusedWindow(), {
       type: 'warning',
@@ -123,34 +130,61 @@ function createIpcHandlers({
       defaultId: 1,
       cancelId: 1,
       title: 'Copy password',
-      message: 'Copy this password to the system clipboard?',
-      detail: 'Other apps or clipboard history may capture it. The clipboard is temporary, not secure storage.'
+      message,
+      detail: COPY_DETAIL
     });
     if (confirmation.response !== 0) return { success: false, cancelled: true };
+    // The idle lock may have fired while the dialog was open.
+    requireUnlocked();
 
-    pendingCopyToken = crypto.randomUUID();
+    pendingCopy = { token: crypto.randomUUID(), target };
     copyTokenTimer = setTimeout(() => {
-      pendingCopyToken = undefined;
+      pendingCopy = undefined;
       copyTokenTimer = null;
     }, copyTokenMs);
-    return { success: true, token: pendingCopyToken };
+    return { success: true, token: pendingCopy.token };
   }
 
-  function copyPassword(password, token) {
-    if (!isUnlocked()) throw new Error('Unlock the vault first.');
-    if (!pendingCopyToken || token !== pendingCopyToken) throw new Error('Confirm the copy action first.');
-    pendingCopyToken = undefined;
-    if (copyTokenTimer) clearTimeout(copyTokenTimer);
-    copyTokenTimer = null;
-    if (typeof password !== 'string' || password.length === 0 || password.length > 4096) {
-      throw new Error('Password must contain 1 to 4096 characters.');
-    }
+  async function confirmEntryCopy(entryId) {
+    requireUnlocked();
+    const site = await getVault().getEntrySite(entryId);
+    return confirmCopy(entryId, `Copy the password for ${site}?`);
+  }
 
+  async function confirmGeneratedCopy() {
+    requireUnlocked();
+    return confirmCopy(GENERATED, 'Copy this generated password to the system clipboard?');
+  }
+
+  // Each token works once, only for the target it was confirmed for.
+  function takeCopyToken(token, target) {
+    if (!pendingCopy || typeof token !== 'string' || token !== pendingCopy.token || pendingCopy.target !== target) {
+      throw new Error('Confirm the copy action first.');
+    }
+    clearCopyConfirmation();
+  }
+
+  function writeToClipboard(password) {
     clearCopiedPassword();
     clipboard.writeText(password);
     copiedPasswordDigest = crypto.createHash('sha256').update(password).digest();
     clipboardClearTimer = setTimeout(clearCopiedPassword, clipboardClearMs);
     return { success: true };
+  }
+
+  async function copyEntryPassword(entryId, token) {
+    requireUnlocked();
+    takeCopyToken(token, entryId);
+    return writeToClipboard(await getVault().getEntryPassword(entryId));
+  }
+
+  function copyGeneratedPassword(text, token) {
+    requireUnlocked();
+    takeCopyToken(token, GENERATED);
+    if (typeof text !== 'string' || text.length === 0 || text.length > 4096) {
+      throw new Error('Password must contain 1 to 4096 characters.');
+    }
+    return writeToClipboard(text);
   }
 
   function runMenuAction(contents, action) {
@@ -216,12 +250,32 @@ function createIpcHandlers({
       return { success: true };
     });
 
-    registerVaultHandler('vault:confirm-copy', confirmPasswordCopy);
+    registerVaultHandler('vault:confirm-copy-entry', (entryId) => confirmEntryCopy(entryId));
 
-    registerVaultHandler('vault:copy-password', (password, token) => {
-      const result = copyPassword(password, token);
+    registerVaultHandler('vault:copy-entry-password', async (entryId, token) => {
+      const result = await copyEntryPassword(entryId, token);
       armIdleLock();
       return result;
+    });
+
+    registerVaultHandler('vault:confirm-copy-generated', () => confirmGeneratedCopy());
+
+    registerVaultHandler('vault:copy-generated', (text, token) => {
+      const result = copyGeneratedPassword(text, token);
+      armIdleLock();
+      return result;
+    });
+
+    registerVaultHandler('vault:reveal-password', async (entryId) => {
+      const password = await getVault().getEntryPassword(entryId);
+      armIdleLock();
+      return { success: true, password };
+    });
+
+    registerVaultHandler('vault:get-backup-codes', async (entryId) => {
+      const codes = await getVault().getBackupCodes(entryId);
+      armIdleLock();
+      return { success: true, codes };
     });
 
     ipcMain.handle('window:menu-action', (event, action) => {
@@ -254,7 +308,7 @@ function createIpcHandlers({
     });
 
     registerVaultHandler('vault:load-entries', async () => {
-      const entries = await getVault().loadEntries();
+      const entries = await getVault().loadEntrySummaries();
       armIdleLock();
       return { success: true, entries };
     });

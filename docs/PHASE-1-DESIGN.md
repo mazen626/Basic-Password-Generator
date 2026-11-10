@@ -146,7 +146,7 @@ Renderer behavior is checked with a scripted run of the real app against a throw
 ## Compatibility
 
 - **No vault format change:** the file stays at version 3 with the same entry schema, so no migration is needed. Versions 1 to 3 still open.
-- **`preload.js` API change:** `copyPassword(password, token)` is removed. It's replaced by `confirmPasswordCopy(entryId)`, `copyEntryPassword(entryId, token)` and `copyGeneratedPassword(text, token)`. `revealPassword(id)`, `getBackupCodes(id)` and `changeMasterPassword(...)` are added. Only `renderer.js` uses this API.
+- **`preload.js` API change:** `confirmPasswordCopy()` and `copyPassword(password, token)` are removed. They are replaced by `confirmEntryCopy(entryId)` and `copyEntryPassword(entryId, token)` for saved entries, and `confirmGeneratedCopy()` and `copyGeneratedPassword(text, token)` for the generator. `revealPassword(entryId)` and `getBackupCodes(entryId)` are added in 1.2, and `changeMasterPassword(...)` comes in 1.4. Only `renderer.js` uses this API.
 - **`updateEntry`:** existing calls that send the password still work. Omitting it is new.
 - **CSV:** import and export already run in the main process, so they're unaffected.
 

@@ -46,13 +46,13 @@ Versions 1 and 2 are upgraded to version 3 on unlock, after a byte-for-byte copy
 | --- | --- | --- |
 | Main (`main.js`, `ipc-handlers.js`, `vault.js`) | Derived key, vault file, clipboard, dialogs | All vault operations run through `registerVaultHandler` in `ipc-handlers.js`, which rejects calls from any frame other than the app's own `page.html` and serializes operations. Every Electron permission request and check is denied. `test/ipc-handlers.test.js` covers the caller checks, locked-vault calls, copy tokens, clipboard clearing, idle lock, menu actions and permissions. |
 | Preload (`preload.js`) | `ipcRenderer` | Exposes a fixed `window.electronAPI` surface only. |
-| Renderer (`renderer.js`, `page.html`) | Decrypted entries after unlock | `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`. The CSP allows only local scripts, styles, and fonts. Navigation and new windows are blocked. Entry data is rendered with `textContent`, never `innerHTML`. |
+| Renderer (`renderer.js`, `page.html`) | Entry metadata after unlock: site, username, notes, category, favorite, dates, and backup code counts. A password or an entry's codes only after the user presses Reveal, Show codes, or Show in the edit form | `sandbox: true`, `contextIsolation: true`, `nodeIntegration: false`. The CSP allows only local scripts, styles, and fonts. Navigation and new windows are blocked. Entry data is rendered with `textContent`, never `innerHTML`. Revealed values are kept only by the card or form that asked for them, and are dropped on hide, re-render or lock. Notes are treated as metadata so they stay searchable; keep secrets in the password or backup code fields. |
 
 ## Session behavior
 
 - **Locking:** manual, from the File menu, after 5 minutes without activity, when the window closes, and on quit. Locking zeroes the key buffer.
 - **Activity:** the renderer reports activity at most once every 30 seconds, so auto-lock happens between 4.5 and 5 minutes after the last real input. Resuming from sleep or unlocking the screen re-checks the idle timer, but it does not lock immediately.
-- **Copying:** a native confirmation dialog issues a one-time token that is valid for 30 seconds. The clipboard is cleared after 10 seconds if it still holds the copied password (compared by SHA-256), and again on quit.
+- **Copying:** a native confirmation dialog issues a one-time token that is valid for 30 seconds and tied to what it was confirmed for. For a saved entry, the dialog names the site, the window sends only the entry ID, and the main process reads the password from the vault. The generator's Copy button sends the generated password, which the window created, with its own token. If the vault locks while the dialog is open, no token is issued. The clipboard is cleared after 10 seconds if it still holds the copied password (compared by SHA-256), and again on quit.
 
 ## CSV import and export
 
@@ -97,8 +97,8 @@ Both run from the File menu and only while the vault is unlocked. The page asks 
 
 ## Known gaps (planned for Phase 1)
 
-1. **Plaintext in the renderer.** `vault:load-entries` returns every decrypted password and backup code to the renderer, which keeps them in memory (`savedEntries`) until lock. "Hide" only affects what's displayed.
-2. **Copy takes plaintext.** `vault:copy-password` receives the password from the renderer instead of an entry ID.
+1. **Plaintext in the renderer (fixed in Phase 1 milestone 1.2).** `vault:load-entries` now returns metadata only. A password or an entry's codes reach the renderer only through `vault:reveal-password` or `vault:get-backup-codes`, one entry at a time, when the user asks. Values that have been revealed stay in renderer memory until garbage collected, and JavaScript can't zero them.
+2. **Copy takes plaintext (fixed in Phase 1 milestone 1.2).** Copying a saved entry sends only its ID with a token tied to that entry. The generator's Copy button still sends text, because the window created that password.
 3. **Master password in IPC.** The master password crosses IPC as a JavaScript string, which can't be zeroed. Only the derived key buffer is zeroed.
 4. **Write durability.** The temp-file-and-rename write does not `fsync` before renaming, so a power loss can still produce a truncated file. Phase 0 tests confirm that a truncated file is detected and never overwritten, but recovery is manual (restore a backup).
 5. **Backups are never pruned** and stay readable with the master password that was in use when they were created.
