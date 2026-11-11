@@ -121,7 +121,7 @@ The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the inst
 - `vault-before-import-<timestamp>-<id>.bak`: made automatically before a CSV import.
 - `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
-Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Preview…** opens one with its password to show how many entries it holds, without changing anything. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
 
 ## Project structure
 

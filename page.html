@@ -161,6 +161,12 @@
   .backups-state.bad { color: #ff9ead; }
   .backups-id { grid-column: 1 / -1; color: var(--muted); font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
   .backups-actions { gap: 8px; }
+  .backups-preview { display: grid; gap: 10px; }
+  .backups-preview-title { margin: 0; font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+  .backups-preview-status { min-height: 16px; margin: 0; color: #ff9ead; font-size: 12px; }
+  .backups-preview-summary p { margin: 0 0 6px; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+  .backups-preview-summary .backups-note { color: var(--muted); font-size: 12px; }
+  .backups-preview-summary[hidden] { display: none; }
   .password-row { display: flex; gap: 7px; }
   .password-row input { flex: 1; min-width: 0; }
   .password-row button { flex: none; min-height: 32px; padding: 6px 12px; font-size: 11px; }
@@ -405,11 +411,31 @@
 <dialog id="backupsDialog" class="csv-report backups-dialog" aria-labelledby="backupsTitle">
   <h2 id="backupsTitle">Backups</h2>
   <p id="backupsStatus" class="backups-status" role="status"></p>
-  <p id="backupsNote" class="backups-note" hidden>Showing the newest 1,000 backups.</p>
-  <ul id="backupsList" class="backups-list"></ul>
-  <div class="csv-report-actions backups-actions">
-    <button type="button" id="backupsCreate" class="primary-button">Create backup now</button>
-    <button type="button" id="backupsClose">Close</button>
+  <div id="backupsListView">
+    <p id="backupsNote" class="backups-note" hidden>Showing the newest 1,000 backups.</p>
+    <ul id="backupsList" class="backups-list"></ul>
+    <div class="csv-report-actions backups-actions">
+      <button type="button" id="backupsCreate" class="primary-button">Create backup now</button>
+      <button type="button" id="backupsClose">Close</button>
+    </div>
+  </div>
+  <div id="backupsPreview" class="backups-preview hidden">
+    <h3 id="backupsPreviewTitle" class="backups-preview-title"></h3>
+    <p class="backups-note">This backup opens with the master password that was in use when it was made. If you restore it, that password becomes your master password again.</p>
+    <div class="field">
+      <label for="backupsPreviewPassword">Backup master password</label>
+      <input type="password" id="backupsPreviewPassword" autocomplete="off" maxlength="1024">
+    </div>
+    <p id="backupsPreviewStatus" class="backups-preview-status" role="status"></p>
+    <div id="backupsPreviewSummary" class="backups-preview-summary" hidden>
+      <p id="backupsPreviewCounts"></p>
+      <p id="backupsPreviewUpgrade" hidden></p>
+      <p class="backups-note">Restoring a backup comes in the next update.</p>
+    </div>
+    <div class="csv-report-actions backups-actions">
+      <button type="button" id="backupsPreviewBack">Back</button>
+      <button type="button" id="backupsPreviewRun" class="primary-button">Preview</button>
+    </div>
   </div>
 </dialog>
 <script src="./backup-codes.js"></script>

@@ -33,6 +33,9 @@ const BACKUP_PREFIXES = {
 // The end of every backup name: a 13-digit millisecond timestamp, then a UUID in the lowercase
 // hex that crypto.randomUUID() writes.
 const BACKUP_SUFFIX = '-(\\d{13})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.bak';
+// One message for a wrong password and for tampered or invalid backup contents, so a preview
+// never tells the two apart.
+const BACKUP_OPEN_ERROR = 'Incorrect password, or the backup is damaged.';
 
 class PasswordVault {
   constructor(filePath) {
@@ -126,6 +129,71 @@ class PasswordVault {
       b.createdAt.localeCompare(a.createdAt) ||
       a.id.localeCompare(b.id)
     ));
+  }
+
+  // Restore preview (docs/PHASE-2A-DESIGN.md, part C). Opens one backup with its own password and
+  // describes it, without touching the vault: nothing is written, and the vault's key and lock
+  // state are never used or changed, so it works locked or unlocked. Version 1 and 2 backups are
+  // also upgraded in memory (a dry run), so one that would fail its upgrade on unlock fails here.
+  // Returns metadata only, plus the SHA-256 (hex) of the exact bytes that were checked.
+  async previewBackup(id, password) {
+    const info = this.validateBackupId(id);
+    if (typeof password !== 'string' || password.length === 0 || password.length > MAX_MASTER_PASSWORD_LENGTH) {
+      throw new Error('Enter the master password for this backup (1 to 1024 characters).');
+    }
+
+    const contents = await readBackupFile(path.join(path.dirname(this.filePath), id));
+    const digest = crypto.createHash('sha256').update(contents).digest('hex');
+
+    let envelope;
+    try {
+      envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+    } catch {
+      throw new Error('Backup file is invalid or corrupted.');
+    }
+    if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) {
+      throw new Error('Backup file is invalid or corrupted.');
+    }
+
+    const key = await deriveKey(password, Buffer.from(envelope.salt, 'base64'), envelope.iterations);
+    let entries;
+    try {
+      // decryptEntries checks the entries against the rules of the backup's own version.
+      entries = decryptEntries(envelope, key);
+      if (envelope.version !== FORMAT_VERSION) validateEntries(migrateEntries(entries));
+    } catch {
+      throw new Error(BACKUP_OPEN_ERROR);
+    } finally {
+      key.fill(0);
+    }
+
+    return { summary: summarizeBackup(entries, envelope.version), digest };
+  }
+
+  // SHA-256 (hex) of the current vault file's bytes, read once, or 'absent' when there is none.
+  // Streamed, so a vault of any size can be compared later without holding it in memory.
+  async getVaultState() {
+    let handle;
+    try {
+      handle = await fs.open(this.filePath, 'r');
+    } catch (error) {
+      if (error.code === 'ENOENT') return 'absent';
+      throw new Error('Could not read the vault file.');
+    }
+    try {
+      const hash = crypto.createHash('sha256');
+      const buffer = Buffer.alloc(1024 * 1024);
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+      return hash.digest('hex');
+    } catch {
+      throw new Error('Could not read the vault file.');
+    } finally {
+      await handle.close();
+    }
   }
 
   async unlock(masterPassword, confirmation) {
@@ -624,6 +692,48 @@ async function inspectBackup(backupPath, id, info, current) {
     passwordHint = envelope.salt === current.salt && envelope.iterations === current.iterations ? 'current' : 'other';
   }
   return { ...item, version: envelope.version, status: 'valid', passwordHint };
+}
+
+// Reads one backup for a preview, with the same rules as the inventory (inspectBackup): only a
+// regular file (never a symlink, junction or folder), at most MAX_VAULT_BYTES. Errors never
+// include the path.
+async function readBackupFile(backupPath) {
+  let stats;
+  try {
+    stats = await fs.lstat(backupPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('Backup not found.');
+    throw new Error('Could not read the backup.');
+  }
+  if (!stats.isFile()) throw new Error('Backup not found.');
+  if (stats.size > MAX_VAULT_BYTES) throw new Error('Backup file is too large.');
+
+  let contents;
+  try {
+    contents = await readFileBounded(backupPath, MAX_VAULT_BYTES);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('Backup not found.');
+    throw new Error('Could not read the backup.');
+  }
+  if (!contents) throw new Error('Backup file is too large.');
+  return contents;
+}
+
+// Metadata only: no site names, usernames, passwords, notes, codes or key settings. Dates come
+// from the entries as stored; a version 1 entry without a date is left out of the range rather
+// than given the time of the preview.
+function summarizeBackup(entries, version) {
+  // The timestamps are already validated ISO strings; compare them as dates.
+  const pick = (values, isBetter) => values
+    .filter((value) => typeof value === 'string')
+    .reduce((best, value) => (best === null || isBetter(Date.parse(value), Date.parse(best)) ? value : best), null);
+  return {
+    entryCount: entries.length,
+    newestUpdatedAt: pick(entries.map((entry) => entry.updatedAt), (a, b) => a > b),
+    oldestCreatedAt: pick(entries.map((entry) => entry.createdAt), (a, b) => a < b),
+    version,
+    willUpgrade: version !== FORMAT_VERSION
+  };
 }
 
 async function readVaultFile(filePath) {

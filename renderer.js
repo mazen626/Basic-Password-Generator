@@ -971,6 +971,11 @@ function renderBackupItem(item) {
   const state = add("backups-state", `${icon} ${label}`);
   if (item.status !== "valid") state.classList.add("bad");
   add("backups-meta", BACKUP_HINTS[item.passwordHint] || BACKUP_HINTS.unknown);
+  if (item.status === "valid") {
+    const previewButton = makeButton("Preview…", () => openBackupPreview(item, previewButton));
+    previewButton.setAttribute("aria-label", `Preview backup from ${formatBackupDate(item.createdAt)}`);
+    li.append(previewButton);
+  }
   add("backups-id", String(item.id), String(item.id));
   return li;
 }
@@ -998,17 +1003,123 @@ async function loadBackups() {
   backupsNote.hidden = !result.truncated;
 }
 
+// Restore preview step: shows what a backup holds without changing anything.
+const backupsListView = document.getElementById("backupsListView");
+const backupsPreview = document.getElementById("backupsPreview");
+const backupsPreviewTitle = document.getElementById("backupsPreviewTitle");
+const backupsPreviewPassword = document.getElementById("backupsPreviewPassword");
+const backupsPreviewStatus = document.getElementById("backupsPreviewStatus");
+const backupsPreviewSummary = document.getElementById("backupsPreviewSummary");
+const backupsPreviewCounts = document.getElementById("backupsPreviewCounts");
+const backupsPreviewUpgrade = document.getElementById("backupsPreviewUpgrade");
+const backupsPreviewRun = document.getElementById("backupsPreviewRun");
+let previewBackupId = null;
+let previewReturnButton = null;
+
+function formatSummaryDate(iso, withTime) {
+  const date = new Date(iso);
+  if (!iso || Number.isNaN(date.getTime())) return "unknown";
+  const day = date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  if (!withTime) return day;
+  return `${day}, ${date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+
+function describeBackupSummary(summary) {
+  if (!summary.entryCount) return "This backup has no entries.";
+  const count = `${summary.entryCount} ${summary.entryCount === 1 ? "entry" : "entries"}`;
+  return `${count}. Last changed ${formatSummaryDate(summary.newestUpdatedAt, true)}. Oldest entry from ${formatSummaryDate(summary.oldestCreatedAt, false)}.`;
+}
+
+function resetBackupPreview() {
+  previewBackupId = null;
+  previewReturnButton = null;
+  backupsPreviewPassword.value = "";
+  backupsPreviewStatus.textContent = "";
+  backupsPreviewCounts.textContent = "";
+  backupsPreviewUpgrade.textContent = "";
+  backupsPreviewUpgrade.hidden = true;
+  backupsPreviewSummary.hidden = true;
+  backupsPreviewTitle.textContent = "";
+  backupsPreview.classList.add("hidden");
+  backupsListView.classList.remove("hidden");
+}
+
+function openBackupPreview(item, button) {
+  resetBackupPreview();
+  previewBackupId = item.id;
+  previewReturnButton = button;
+  backupsPreviewTitle.textContent = `${formatBackupDate(item.createdAt)} · ${BACKUP_KINDS[item.kind] || "Backup"}`;
+  backupsListView.classList.add("hidden");
+  backupsPreview.classList.remove("hidden");
+  backupsPreviewPassword.focus();
+}
+
+function backBackupPreview() {
+  const returnTo = previewReturnButton;
+  resetBackupPreview();
+  if (returnTo && returnTo.isConnected) returnTo.focus();
+  else backupsCreate.focus();
+}
+
+async function runBackupPreview() {
+  const id = previewBackupId;
+  if (id === null) return;
+  backupsPreviewStatus.textContent = "";
+  backupsPreviewSummary.hidden = true;
+  const password = backupsPreviewPassword.value;
+  if (!password) {
+    backupsPreviewStatus.textContent = "Enter the backup's master password.";
+    backupsPreviewPassword.focus();
+    return;
+  }
+  await withDisabled(backupsPreviewRun, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.previewBackup(id, password);
+    } catch {
+      result = { success: false, error: "Could not preview this backup." };
+    }
+    if (!backupsDialog.open || previewBackupId !== id) return;
+    backupsPreviewPassword.value = "";
+    if (!result || !result.success) {
+      backupsPreviewStatus.textContent = (result && result.error) || "Could not preview this backup.";
+      backupsPreviewPassword.focus();
+      return;
+    }
+    const { summary } = result;
+    backupsPreviewCounts.textContent = describeBackupSummary(summary);
+    backupsPreviewUpgrade.hidden = !summary.willUpgrade;
+    backupsPreviewUpgrade.textContent = summary.willUpgrade
+      ? `Format version ${summary.version}: it will be upgraded the first time it is unlocked.`
+      : "";
+    backupsPreviewSummary.hidden = false;
+  });
+}
+
+backupsPreviewRun.addEventListener("click", runBackupPreview);
+document.getElementById("backupsPreviewBack").addEventListener("click", backBackupPreview);
+backupsPreviewPassword.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  if (!backupsPreviewRun.disabled) runBackupPreview();
+});
+
 function closeBackupsDialog() {
   if (backupsDialog.open) backupsDialog.close();
   clearBackupsList();
+  resetBackupPreview();
 }
 
-backupsDialog.addEventListener("close", clearBackupsList);
+backupsDialog.addEventListener("close", () => {
+  clearBackupsList();
+  resetBackupPreview();
+});
 document.getElementById("backupsClose").addEventListener("click", closeBackupsDialog);
 
 backupsMenuItem.addEventListener("click", () => {
   closeMenus();
   if (vaultPanel.classList.contains("hidden")) return;
+  resetBackupPreview();
   backupsDialog.showModal();
   backupsCreate.focus();
   loadBackups();

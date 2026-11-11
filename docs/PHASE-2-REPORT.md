@@ -4,6 +4,28 @@ A short report is added here after each Phase 2 milestone: what changed, what is
 
 Plan: [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) (Phase 2: 2A backups and restore, 2B record types, 2C import and export). Design: [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md).
 
+## 2A.2: Restore preview (version 1.5.0, 2026-11-12)
+
+**What changed**
+- Each valid backup in **File > Backups…** has a **Preview…** button. It asks for that backup's master password, with a note that restoring would bring that password back, then shows how many entries the backup holds, when an entry was last changed, the oldest entry's date, and whether it will be upgraded to the current format.
+- `docs/SECURITY.md` and the README describe the preview.
+
+**What is implemented**
+- The preview opens the backup in memory only. It writes nothing and never changes the vault's lock state or its key, so it works locked or unlocked. Older-format backups are also upgraded in memory as a test, so one that couldn't be upgraded is caught now.
+- The window gets counts and dates only, never site names, usernames, passwords, codes or key settings. A wrong password and a damaged backup show the same message, and the password field is cleared after every attempt.
+- A successful preview creates a one-time restore pass, valid for 2 minutes and tied to the exact backup file and the current vault file. Locking, auto-lock, unlocking, a password change, a CSV import, closing the app or a new preview cancel it. The restore that uses it comes in 2A.3.
+
+**Checks**
+- `npm test`: 188 tests, 186 pass, 0 fail, 2 skipped. Both skipped tests need file symlinks, which this Windows account isn't allowed to create.
+- Code reviewed against the approved design (part C and the restore-pass rules in parts D and F).
+- Not yet checked by hand in the running app.
+
+**Still open**
+- The path where an older backup decrypts but fails its in-memory upgrade has no dedicated test, because no such backup could be built.
+- The preview has no attempt limit, the same as unlock. Someone with the file can guess offline anyway.
+
+**Next:** 2A.3, restore: save the current vault first, then replace it with the previewed backup.
+
 ## 2A.1: Backup list (version 1.4.0, 2026-11-12)
 
 **What changed**

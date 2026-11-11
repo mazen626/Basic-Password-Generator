@@ -112,7 +112,13 @@ Backups are byte-for-byte copies of `vault.json`, written next to it with `wx` a
 - Each item shows its date (from the name), kind, size, status and a password hint. The hint compares the backup's salt and iteration count with the current vault: "current" is reliable, "other" means it may need an earlier master password. The salt itself is never sent to the window.
 - The window refers to a backup only by its validated file name, never a path. It receives at most 1,000 items, valid ones first.
 
-Restore (2A.2, 2A.3) and cleanup (2A.4) are designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
+**Restore preview (2A.2).** "Preview…" on a valid backup asks for that backup's master password and calls `vault:preview-backup`, which works locked or unlocked:
+- The backup is read with the same file rules as the list, decrypted in memory with a key derived from its own salt and iterations, and fully validated. Version 1 and 2 backups are also upgraded in memory as a dry run. Nothing is written, and the vault's own key and lock state are never used or changed.
+- The derived key is zeroed afterwards. The window receives only the entry count, the newest and oldest entry dates, the format version and whether it will be upgraded: no entry data and no key settings. A wrong password and damaged contents give the same error.
+- A successful preview issues a one-time restore token, valid for 2 minutes and held in the main process with the backup's SHA-256, the current vault file's SHA-256 and the summary. Lock, auto-lock, unlock, a password change, a CSV import, closing the app and any new preview cancel it. The restore that uses it comes in 2A.3.
+- Decrypted entries are JavaScript strings during the preview and can't be zeroed, as with unlock.
+
+Restore (2A.3) and cleanup (2A.4) are designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
 
 ## Known gaps (planned for Phase 1)
 

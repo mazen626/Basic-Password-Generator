@@ -534,7 +534,7 @@ function registerImport({ registerVaultHandler, getVault, getParentWindow, dialo
 
     onActivity();
     return { success: true, ...result, backupName, csvDeleted, ...report };
-  });
+  }, { cancelsRestoreToken: true }); // an import changes the vault, so any restore preview is stale
 }
 
 // ---------------------------------------------------------------------------------------
