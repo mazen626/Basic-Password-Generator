@@ -144,7 +144,7 @@ Development is planned in phases:
 | --- | --- |
 | 0. Stabilization | Packaging checks, broader tests, recovery scenarios, threat model |
 | 1. Security foundation | Less plaintext in the interface, ID-based copy, safer writes, master-password change |
-| 2. Vault management | Backup manager and restore, password history, secure notes, imports |
+| 2. Vault management | Backup manager and restore, password history, secure notes, CSV import and export that work with browsers and other password managers |
 | 3. Password intelligence | Password health, weak and reused password detection, passphrases |
 | 4. Application experience | Dashboard, custom categories, shortcuts, onboarding, accessibility |
 | 5. Multi-device | Optional end-to-end encrypted sync |
