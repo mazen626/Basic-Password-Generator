@@ -465,7 +465,7 @@ test('vault:change-master-password changes the password and drops any pending co
 
   const result = await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password');
   assert.equal(result.success, true);
-  assert.match(result.backupName, /^vault-backup-\d+-[0-9a-f-]{36}\.bak$/);
+  assert.match(result.backupName, /^vault-before-password-change-\d{13}-[0-9a-f-]{36}\.bak$/);
   assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', token), { success: false, error: 'Confirm the copy action first.' });
 
   vault.lock();
@@ -482,4 +482,81 @@ test('vault:change-master-password reports errors and refuses a locked vault', a
   vault.lock();
   assert.deepEqual(await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password'),
     { success: false, error: 'Unlock the vault first.' });
+});
+
+// --- Phase 2A milestone 2A.1: backup list ---
+
+const backupName = (ms, n) => `vault-backup-${ms}-${String(n).padStart(8, '0')}-0000-4000-8000-000000000000.bak`;
+
+test('vault:list-backups works while locked and rejects other callers', async (t) => {
+  const { vault } = await createVault(t);
+  const made = await vault.createBackup();
+  vault.lock();
+  const h = harness(t, vault);
+
+  const result = await h.invoke('vault:list-backups');
+  assert.equal(result.success, true);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(result.items.map((item) => [item.id, item.kind, item.status, item.passwordHint, item.version]),
+    [[made, 'backup', 'valid', 'current', 3]]);
+  assert.match(result.items[0].createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.equal(vault.isUnlocked(), false);
+
+  const subframe = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  assert.deepEqual(await h.invokeAs(subframe, 'vault:list-backups'), { success: false, error: 'Unauthorized caller.' });
+});
+
+test('vault:list-backups counts as activity while unlocked', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+
+  await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD);
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal((await h.invoke('vault:list-backups')).success, true);
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal(vault.isUnlocked(), true);
+  t.mock.timers.tick(60 * 1000);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('vault:list-backups sends at most 1,000 items, valid ones first, newest first', async (t) => {
+  const { vault, vaultPath, directory } = await createVault(t);
+  const contents = await fs.promises.readFile(vaultPath);
+  const start = 1762900000000;
+  const valid = [];
+  for (let n = 0; n < 1500; n++) {
+    valid.push(backupName(start + n, n));
+    await fs.promises.writeFile(path.join(directory, valid[n]), contents);
+  }
+  const junk = [];
+  for (let n = 0; n < 300; n++) {
+    // Junk is newer than every valid file, so it would come first if sorted by date alone.
+    junk.push(backupName(start + 10000 + n, 5000 + n));
+    await fs.promises.writeFile(path.join(directory, junk[n]), 'junk');
+  }
+  const h = harness(t, vault);
+
+  let result = await h.invoke('vault:list-backups');
+  assert.equal(result.success, true);
+  assert.equal(result.truncated, true);
+  assert.equal(result.items.length, 1000);
+  assert.deepEqual(result.items.map((item) => item.id), valid.slice(500).reverse());
+
+  for (const name of valid.slice(0, 1200)) await fs.promises.rm(path.join(directory, name));
+  result = await h.invoke('vault:list-backups');
+  assert.equal(result.truncated, false);
+  assert.equal(result.items.length, 600);
+  assert.deepEqual(result.items.slice(0, 300).map((item) => item.status), Array(300).fill('valid'));
+  assert.deepEqual(result.items.slice(300).map((item) => item.id), junk.slice().reverse());
+
+  await fs.promises.writeFile(path.join(directory, backupName(start - 1, 9999)), 'junk');
+  for (let n = 0; n < 401; n++) {
+    await fs.promises.writeFile(path.join(directory, backupName(start + 20000 + n, 7000 + n)), contents);
+  }
+  result = await h.invoke('vault:list-backups');
+  assert.equal(result.truncated, true);
+  assert.equal(result.items.length, 1000);
+  assert.equal(result.items.filter((item) => item.status === 'valid').length, 701);
+  assert.equal(result.items.findIndex((item) => item.status !== 'valid'), 701, 'invalid items only fill the places left');
 });

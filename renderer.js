@@ -614,6 +614,7 @@ async function initializeUnlockForm() {
 
 function clearUnlockedView(message) {
   closeChangePasswordDialog();
+  closeBackupsDialog();
   entriesList.replaceChildren();
   savedEntries = [];
   searchInput.value = "";
@@ -794,6 +795,7 @@ favoriteFilter.addEventListener("change", renderEntries);
 const menuTriggers = [...document.querySelectorAll(".menu-trigger")];
 const lockMenuItem = document.querySelector('[data-action="lock"]');
 const changePasswordMenuItem = document.getElementById("changePasswordMenuItem");
+const backupsMenuItem = document.getElementById("backupsMenuItem");
 
 function menuListFor(trigger) {
   return document.getElementById(trigger.getAttribute("aria-controls"));
@@ -810,6 +812,7 @@ function openMenu(trigger, focusFirst = false) {
   closeMenus();
   lockMenuItem.disabled = vaultPanel.classList.contains("hidden");
   changePasswordMenuItem.disabled = vaultPanel.classList.contains("hidden");
+  backupsMenuItem.disabled = vaultPanel.classList.contains("hidden");
   trigger.setAttribute("aria-expanded", "true");
   const list = menuListFor(trigger);
   list.hidden = false;
@@ -900,6 +903,127 @@ changePasswordForm.addEventListener("submit", (event) => {
     setVaultStatus("Master password changed. Your previous backups still need the old password.");
   });
 });
+
+// Backups (File menu): a read-only list of the backup files in the vault folder.
+const backupsDialog = document.getElementById("backupsDialog");
+const backupsList = document.getElementById("backupsList");
+const backupsStatus = document.getElementById("backupsStatus");
+const backupsNote = document.getElementById("backupsNote");
+const backupsCreate = document.getElementById("backupsCreate");
+
+const BACKUP_KINDS = {
+  backup: "Backup",
+  "pre-upgrade": "Pre-upgrade",
+  "pre-restore": "Pre-restore",
+  "pre-password-change": "Before password change",
+  "pre-import": "Before CSV import"
+};
+const BACKUP_HINTS = {
+  current: "Current password",
+  other: "May need an earlier master password",
+  unknown: "Unknown"
+};
+const BACKUP_STATUSES = {
+  valid: ["✓", "OK"],
+  "too-large": ["⚠", "Too large"],
+  invalid: ["✗", "Damaged or not a backup"],
+  unreadable: ["✗", "Can't be read"]
+};
+
+function formatBackupSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "?";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatBackupDate(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
+}
+
+function setBackupsStatus(text, isError = false) {
+  backupsStatus.textContent = text;
+  backupsStatus.classList.toggle("error", isError);
+}
+
+function clearBackupsList() {
+  backupsList.replaceChildren();
+  backupsNote.hidden = true;
+  setBackupsStatus("");
+}
+
+function renderBackupItem(item) {
+  const li = document.createElement("li");
+  li.className = "backups-item";
+  const add = (className, text, title) => {
+    const node = document.createElement("span");
+    node.className = className;
+    node.textContent = text;
+    if (title) node.title = title;
+    li.append(node);
+    return node;
+  };
+  add("backups-date", formatBackupDate(item.createdAt));
+  add("backups-size", formatBackupSize(item.size));
+  add("backups-meta", BACKUP_KINDS[item.kind] || "Backup");
+  const [icon, label] = BACKUP_STATUSES[item.status] || ["?", "Unknown"];
+  const state = add("backups-state", `${icon} ${label}`);
+  if (item.status !== "valid") state.classList.add("bad");
+  add("backups-meta", BACKUP_HINTS[item.passwordHint] || BACKUP_HINTS.unknown);
+  add("backups-id", String(item.id), String(item.id));
+  return li;
+}
+
+async function loadBackups() {
+  clearBackupsList();
+  setBackupsStatus("Loading backups...");
+  let result;
+  try {
+    result = await window.electronAPI.listBackups();
+  } catch {
+    result = { success: false, error: "Could not load the backup list." };
+  }
+  if (!backupsDialog.open) return;
+  if (!result || !result.success) {
+    setBackupsStatus((result && result.error) || "Could not load the backup list.", true);
+    return;
+  }
+  if (!result.items.length) {
+    setBackupsStatus("No backups yet.");
+    return;
+  }
+  setBackupsStatus("");
+  backupsList.replaceChildren(...result.items.map(renderBackupItem));
+  backupsNote.hidden = !result.truncated;
+}
+
+function closeBackupsDialog() {
+  if (backupsDialog.open) backupsDialog.close();
+  clearBackupsList();
+}
+
+backupsDialog.addEventListener("close", clearBackupsList);
+document.getElementById("backupsClose").addEventListener("click", closeBackupsDialog);
+
+backupsMenuItem.addEventListener("click", () => {
+  closeMenus();
+  if (vaultPanel.classList.contains("hidden")) return;
+  backupsDialog.showModal();
+  backupsCreate.focus();
+  loadBackups();
+});
+
+backupsCreate.addEventListener("click", () => withDisabled(backupsCreate, async () => {
+  setBackupsStatus("Creating backup...");
+  const result = await window.electronAPI.backupVault();
+  if (!backupsDialog.open) return;
+  if (!result.success) {
+    setBackupsStatus(result.error, true);
+    return;
+  }
+  await loadBackups();
+}));
 
 document.querySelectorAll(".menu-list [data-action]").forEach((item) => {
   item.addEventListener("click", async () => {

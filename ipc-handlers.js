@@ -11,6 +11,7 @@ const DEFAULTS = {
   copyTokenMs: 30 * 1000,
   zoomStep: 0.5
 };
+const MAX_LISTED_BACKUPS = 1000;
 const EDIT_ACTIONS = new Set(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']);
 // Copy tokens are tied to one entry ID, or to this marker for the generator's password.
 const GENERATED = Symbol('generated password');
@@ -225,6 +226,18 @@ function createIpcHandlers({
       success: true,
       backupName: await getVault().createBackup()
     }));
+
+    // Read only, and works locked or unlocked (docs/PHASE-2A-DESIGN.md, part B). The scan itself
+    // is uncapped; the window gets at most MAX_LISTED_BACKUPS items, valid ones first.
+    registerVaultHandler('vault:list-backups', async () => {
+      const items = await getVault().listBackups();
+      armIdleLock();
+      return {
+        success: true,
+        items: items.slice(0, MAX_LISTED_BACKUPS),
+        truncated: items.length > MAX_LISTED_BACKUPS
+      };
+    });
 
     registerVaultHandler('vault:open-folder', async () => {
       const error = await shell.openPath(path.dirname(getVault().filePath));

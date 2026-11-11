@@ -116,10 +116,12 @@ Both are in the **File** menu next to **Lock vault**, and both need the vault to
 
 The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the installed app, and the portable build all use this same file. Uninstalling VLAUTR leaves this folder in place, so your vault and backups are kept. Backups are saved next to it:
 
-- `vault-backup-<timestamp>-<id>.bak`: backups you create from the unlock screen.
+- `vault-backup-<timestamp>-<id>.bak`: backups you create with "Create encrypted backup" or "Create backup now".
+- `vault-before-password-change-<timestamp>-<id>.bak`: made automatically before the master password is changed.
+- `vault-before-import-<timestamp>-<id>.bak`: made automatically before a CSV import.
 - `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
-Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
 
 ## Project structure
 

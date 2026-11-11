@@ -21,6 +21,18 @@ const MAX_BACKUP_CODES = 50;
 const MAX_BACKUP_CODE_LENGTH = 128;
 const MAX_MASTER_PASSWORD_LENGTH = 1024;
 const CATEGORIES = new Set(['login', 'email', 'finance', 'identity', 'work', 'other']);
+const MAX_BACKUP_ID_LENGTH = 128;
+// File-name prefixes of the backups the app writes, by kind. Pre-upgrade backups are named after
+// the vault file instead (see backupLegacyVault).
+const BACKUP_PREFIXES = {
+  backup: 'vault-backup',
+  'pre-restore': 'vault-before-restore',
+  'pre-password-change': 'vault-before-password-change',
+  'pre-import': 'vault-before-import'
+};
+// The end of every backup name: a 13-digit millisecond timestamp, then a UUID in the lowercase
+// hex that crypto.randomUUID() writes.
+const BACKUP_SUFFIX = '-(\\d{13})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.bak';
 
 class PasswordVault {
   constructor(filePath) {
@@ -64,7 +76,9 @@ class PasswordVault {
     }
   }
 
-  async createBackup() {
+  // `kind` says why the backup is made (decision 5 of docs/PHASE-2A-DESIGN.md). The window's
+  // "Create backup" passes nothing, so it always writes a plain `vault-backup-*` file.
+  async createBackup(kind = 'backup') {
     let contents;
     try {
       contents = await fs.readFile(this.filePath);
@@ -73,7 +87,45 @@ class PasswordVault {
       throw error;
     }
 
-    return writeBackup(this.filePath, contents);
+    return writeBackup(this.filePath, contents, kind);
+  }
+
+  // Checks a backup file name sent by the window and returns its kind and date. It must match one
+  // of the backup name patterns exactly, so a path, `..` or a drive letter can never get through.
+  validateBackupId(id) {
+    const info = parseBackupId(id, path.basename(this.filePath));
+    if (!info) throw new Error('Invalid backup id.');
+    return info;
+  }
+
+  // Read-only inventory of the backups next to the vault file (docs/PHASE-2A-DESIGN.md, part B).
+  // Each file is only parsed and checked against the envelope rules: no key is derived and nothing
+  // is decrypted. Returns every backup found, valid ones first, each group newest first.
+  async listBackups() {
+    const directory = path.dirname(this.filePath);
+    const vaultFileName = path.basename(this.filePath);
+    let names;
+    try {
+      names = await fs.readdir(directory);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw new Error('Could not read the backup folder.');
+    }
+
+    const current = await readKeySettings(this.filePath);
+    const items = [];
+    for (const name of names) {
+      const info = parseBackupId(name, vaultFileName);
+      if (!info) continue;
+      const item = await inspectBackup(path.join(directory, name), name, info, current);
+      if (item) items.push(item);
+    }
+
+    return items.sort((a, b) => (
+      (a.status === 'valid' ? 0 : 1) - (b.status === 'valid' ? 0 : 1) ||
+      b.createdAt.localeCompare(a.createdAt) ||
+      a.id.localeCompare(b.id)
+    ));
   }
 
   async unlock(masterPassword, confirmation) {
@@ -164,7 +216,7 @@ class PasswordVault {
         currentKey.fill(0);
       }
 
-      const backupName = await writeBackup(this.filePath, contents);
+      const backupName = await writeBackup(this.filePath, contents, 'pre-password-change');
       const salt = crypto.randomBytes(SALT_LENGTH);
       const newKey = await deriveKey(newPassword, salt, PBKDF2_ITERATIONS);
       try {
@@ -463,10 +515,115 @@ async function backupLegacyVault(filePath, contents, version) {
 }
 
 // Saves an exact copy of the vault file next to it, flushed to disk, and returns its name.
-async function writeBackup(filePath, contents) {
-  const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
+async function writeBackup(filePath, contents, kind = 'backup') {
+  if (!Object.hasOwn(BACKUP_PREFIXES, kind)) throw new Error('Unknown backup kind.');
+  const backupName = `${BACKUP_PREFIXES[kind]}-${Date.now()}-${crypto.randomUUID()}.bak`;
   await writeAndFlush(path.join(path.dirname(filePath), backupName), contents, 'wx');
   return backupName;
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Returns { kind, createdAt (ms), legacyVersion } for a recognized backup file name, or null.
+// Every pattern is a full match without the `i` flag, so each file has exactly one accepted
+// spelling, and none allows a separator, `..` or a drive letter.
+function parseBackupId(id, vaultFileName = 'vault.json') {
+  if (typeof id !== 'string' || id.length === 0 || id.length > MAX_BACKUP_ID_LENGTH) return null;
+
+  const legacy = new RegExp(`^${escapeRegExp(vaultFileName)}\\.v([12])${BACKUP_SUFFIX}$`).exec(id);
+  if (legacy) return { kind: 'pre-upgrade', createdAt: Number(legacy[2]), legacyVersion: Number(legacy[1]) };
+
+  for (const [kind, prefix] of Object.entries(BACKUP_PREFIXES)) {
+    const match = new RegExp(`^${prefix}${BACKUP_SUFFIX}$`).exec(id);
+    if (match) return { kind, createdAt: Number(match[1]), legacyVersion: null };
+  }
+  return null;
+}
+
+// Reads at most `limit` bytes, and returns null when the file holds more than that.
+async function readFileBounded(filePath, limit) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.alloc(Math.min(1024 * 1024, limit + 1 - total));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(buffer.subarray(0, bytesRead));
+      total += bytesRead;
+      if (total > limit) return null;
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    await handle.close();
+  }
+}
+
+// The salt and iteration count of the current vault file, or null if it is missing, too large,
+// unreadable or invalid. Used only for comparison with backups and never returned.
+async function readKeySettings(filePath) {
+  try {
+    const contents = await readFileBounded(filePath, MAX_VAULT_BYTES);
+    if (!contents) return null;
+    const envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+    return { salt: envelope.salt, iterations: envelope.iterations };
+  } catch {
+    return null;
+  }
+}
+
+// Builds one inventory item, or returns null when the file is not listed (it disappeared, or it
+// is not a regular file). Only the envelope is checked.
+async function inspectBackup(backupPath, id, info, current) {
+  const item = {
+    id,
+    kind: info.kind,
+    createdAt: new Date(info.createdAt).toISOString(),
+    size: 0,
+    version: null,
+    status: 'unreadable',
+    passwordHint: 'unknown'
+  };
+
+  let stats;
+  try {
+    stats = await fs.lstat(backupPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return item;
+  }
+  // Symlinks, junctions and folders are never listed.
+  if (!stats.isFile()) return null;
+  item.size = stats.size;
+  if (stats.size > MAX_VAULT_BYTES) return { ...item, status: 'too-large' };
+
+  let contents;
+  try {
+    contents = await readFileBounded(backupPath, MAX_VAULT_BYTES);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return item;
+  }
+  if (!contents) return { ...item, status: 'too-large' };
+
+  let envelope;
+  try {
+    envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+  } catch {
+    return { ...item, status: 'invalid' };
+  }
+  if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) {
+    return { ...item, status: 'invalid' };
+  }
+
+  let passwordHint = 'unknown';
+  if (current) {
+    passwordHint = envelope.salt === current.salt && envelope.iterations === current.iterations ? 'current' : 'other';
+  }
+  return { ...item, version: envelope.version, status: 'valid', passwordHint };
 }
 
 async function readVaultFile(filePath) {
@@ -717,5 +874,7 @@ PasswordVault.validateEntry = validateEntry;
 PasswordVault.createBackupCode = createBackupCode;
 PasswordVault.CATEGORIES = CATEGORIES;
 PasswordVault.LIMITS = { MAX_ENTRIES, MAX_SITE_LENGTH };
+// Backup id check, shared with the later preview, restore and delete steps.
+PasswordVault.parseBackupId = parseBackupId;
 
 module.exports = PasswordVault;

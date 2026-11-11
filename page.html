@@ -148,6 +148,19 @@
   .change-password-form h2 { margin-bottom: 14px; }
   .change-password-status { min-height: 16px; margin: 10px 0 0; color: #ff9ead; font-size: 12px; }
   .change-password-actions { gap: 8px; }
+  .backups-dialog { width: min(640px, calc(100vw - 32px)); }
+  .backups-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .backups-status { min-height: 16px; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+  .backups-status.error { color: #ff9ead; }
+  .backups-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+  .backups-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 10px; border: 1px solid var(--divider); border-radius: 8px; background: var(--surface); font-size: 12px; }
+  .backups-date { color: var(--text); font-weight: 600; }
+  .backups-size { color: var(--label); font: 12px/1.4 var(--font-mono); text-align: right; }
+  .backups-meta { color: var(--muted); overflow-wrap: anywhere; }
+  .backups-state { text-align: right; color: var(--label); }
+  .backups-state.bad { color: #ff9ead; }
+  .backups-id { grid-column: 1 / -1; color: var(--muted); font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .backups-actions { gap: 8px; }
   .password-row { display: flex; gap: 7px; }
   .password-row input { flex: 1; min-width: 0; }
   .password-row button { flex: none; min-height: 32px; padding: 6px 12px; font-size: 11px; }
@@ -179,6 +192,7 @@
         <div class="menu-list" id="fileMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-action="lock">Lock vault</button>
           <button type="button" role="menuitem" id="changePasswordMenuItem">Change master password&hellip;</button>
+          <button type="button" role="menuitem" id="backupsMenuItem">Backups&hellip;</button>
           <button type="button" role="menuitem" data-csv="import">Import CSV&hellip;</button>
           <button type="button" role="menuitem" data-csv="export">Export CSV&hellip;</button>
           <div class="menu-sep" role="separator"></div>
@@ -387,6 +401,16 @@
       <button type="submit" id="changePasswordSubmit" class="primary-button">Change password</button>
     </div>
   </form>
+</dialog>
+<dialog id="backupsDialog" class="csv-report backups-dialog" aria-labelledby="backupsTitle">
+  <h2 id="backupsTitle">Backups</h2>
+  <p id="backupsStatus" class="backups-status" role="status"></p>
+  <p id="backupsNote" class="backups-note" hidden>Showing the newest 1,000 backups.</p>
+  <ul id="backupsList" class="backups-list"></ul>
+  <div class="csv-report-actions backups-actions">
+    <button type="button" id="backupsCreate" class="primary-button">Create backup now</button>
+    <button type="button" id="backupsClose">Close</button>
+  </div>
 </dialog>
 <script src="./backup-codes.js"></script>
 <script src="./renderer.js"></script>

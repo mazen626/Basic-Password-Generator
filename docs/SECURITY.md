@@ -25,7 +25,7 @@ A wrong master password and a modified ciphertext both fail GCM authentication. 
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "kdf": "pbkdf2-sha256",
   "iterations": 600000,
   "cipher": "aes-256-gcm",
@@ -95,13 +95,32 @@ Both run from the File menu and only while the vault is unlocked. The page asks 
 - Physical attacks on an unlocked machine within the idle window.
 - Forgetting the master password. There is no recovery mechanism by design.
 
+## Backups
+
+Backups are byte-for-byte copies of `vault.json`, written next to it with `wx` and flushed to disk. They open with the master password that was in use when they were made. Names say why each one was made:
+
+| Name | Made by |
+| --- | --- |
+| `vault-backup-<ms>-<uuid>.bak` | "Create backup" (and, up to version 1.3.4, password changes and CSV imports) |
+| `vault-before-password-change-<ms>-<uuid>.bak` | Change master password (from version 1.4.0) |
+| `vault-before-import-<ms>-<uuid>.bak` | CSV import (from version 1.4.0) |
+| `vault.json.v<1\|2>-<ms>-<uuid>.bak` | Format upgrade on unlock |
+
+**Backup list (Phase 2A milestone 2A.1).** File > Backups… shows the backups through `vault:list-backups`, which works locked or unlocked and is read only:
+- Only top-level files whose names fully match the patterns above (lowercase-hex UUID, no case folding) are considered. Symlinks, junctions and folders are skipped.
+- Files over 8 MB are listed as too large without being read. Others are read up to 8 MB and checked with the same envelope rules as the vault. No key is derived and nothing is decrypted.
+- Each item shows its date (from the name), kind, size, status and a password hint. The hint compares the backup's salt and iteration count with the current vault: "current" is reliable, "other" means it may need an earlier master password. The salt itself is never sent to the window.
+- The window refers to a backup only by its validated file name, never a path. It receives at most 1,000 items, valid ones first.
+
+Restore (2A.2, 2A.3) and cleanup (2A.4) are designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
+
 ## Known gaps (planned for Phase 1)
 
 1. **Plaintext in the renderer (fixed in Phase 1 milestone 1.2).** `vault:load-entries` now returns metadata only. A password or an entry's codes reach the renderer only through `vault:reveal-password` or `vault:get-backup-codes`, one entry at a time, when the user asks. Values that have been revealed stay in renderer memory until garbage collected, and JavaScript can't zero them.
 2. **Copy takes plaintext (fixed in Phase 1 milestone 1.2).** Copying a saved entry sends only its ID with a token tied to that entry. The generator's Copy button still sends text, because the window created that password.
 3. **Master password in IPC.** The master password crosses IPC as a JavaScript string, which can't be zeroed. Only the derived key buffer is zeroed.
 4. **Write durability (fixed in Phase 1 milestone 1.3).** Each save writes `vault.json.tmp`, flushes it to disk (`FileHandle.sync()`, which is `FlushFileBuffers` on Windows), and only then renames it over `vault.json`. A power cut can no longer leave a renamed but unwritten vault. Backup files are flushed to disk the same way. Remaining limit: Windows cannot flush a folder, so a power cut right after the rename can lose the rename, leaving the previous vault in place.
-5. **Backups are never pruned** and stay readable with the master password that was in use when they were created.
+5. **Backups are never pruned** and stay readable with the master password that was in use when they were created. They can now be listed (2A.1); restore and manual cleanup come in milestones 2A.3 and 2A.4.
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
 7. **Permissions (fixed in Phase 1 milestone 1.1).** `denyAllPermissions` in `ipc-handlers.js` now denies every Electron permission request and check, such as camera, microphone and notifications. The app needs none of them.
 8. **Master-password change (fixed in Phase 1 milestone 1.4).** File > Change master password checks the current password, saves a byte-for-byte backup, then re-encrypts the vault with a fresh salt and 600,000 iterations, which also upgrades vaults created with fewer. A failure before the rename leaves the old vault and key in use. Backups made before the change still open only with the old password.
