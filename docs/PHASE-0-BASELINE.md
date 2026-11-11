@@ -13,7 +13,7 @@ Results of the Phase 0 stabilization pass (2026-11-03). Use these numbers and fi
 | `dist/VLAUTR <version>.exe` (portable) | 103.7 MB |
 | `dist/win-unpacked/resources/app.asar` | 4.2 MB |
 
-**Fixed in Phase 0:** `build.files` was `**/*`, which packed `.claude/`, `.superdesign/`, `test/`, and other non-app files into the build. It now lists the app files explicitly. The package contains `main.js`, `preload.js`, `renderer.js`, `page.html`, `vault.js`, and `package.json`, plus the production dependencies `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`. `app.asar` shrank from 6.7 MB to 4.2 MB.
+**Fixed in Phase 0:** `build.files` was `**/*`, which packed local tool folders such as `.superdesign/`, `test/`, and other non-app files into the build. It now lists the app files explicitly. The package contains `main.js`, `preload.js`, `renderer.js`, `page.html`, `vault.js`, and `package.json`, plus the production dependencies `@fontsource/ibm-plex-sans` and `@fontsource/ibm-plex-mono`. `app.asar` shrank from 6.7 MB to 4.2 MB.
 
 **Fonts:** all six font files `page.html` uses are inside `app.asar`. In the packaged app, IBM Plex Sans loads and is the body font.
 

@@ -13,7 +13,7 @@
 
 VLAUTR keeps your credentials on your own machine. Everything is encrypted with a key derived from your master password, nothing is sent over the network, and the master password is never written to disk.
 
-> VLAUTR is the project's working name and may change.
+> VLAUTR is the project's official name.
 
 ## Screenshots
 
