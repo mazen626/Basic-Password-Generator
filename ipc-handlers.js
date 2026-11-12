@@ -1,6 +1,6 @@
 // IPC handlers for the main process: caller checks, the vault calls, copy and clipboard
-// clearing, the idle lock, and the themed menu. Electron objects are passed in so the
-// handlers can be tested without Electron (see test/ipc-handlers.test.js). main.js only
+// clearing, restore tokens, the idle lock, and the themed menu. Electron objects are passed in
+// so the handlers can be tested without Electron (see test/ipc-handlers.test.js). main.js only
 // creates the window and wires these up.
 const crypto = require('node:crypto');
 const path = require('node:path');
@@ -9,12 +9,31 @@ const DEFAULTS = {
   idleLockMs: 5 * 60 * 1000,
   clipboardClearMs: 10 * 1000,
   copyTokenMs: 30 * 1000,
+  restoreTokenMs: 2 * 60 * 1000,
   zoomStep: 0.5
 };
+const MAX_LISTED_BACKUPS = 1000;
 const EDIT_ACTIONS = new Set(['undo', 'redo', 'cut', 'copy', 'paste', 'selectAll']);
 // Copy tokens are tied to one entry ID, or to this marker for the generator's password.
 const GENERATED = Symbol('generated password');
 const COPY_DETAIL = 'Other apps or clipboard history may capture it. The clipboard is temporary, not secure storage.';
+const RESTORE_TOKEN_ERROR = 'Preview the backup again before restoring.';
+const RESTORE_CHANGED_ERROR = 'The vault changed while the confirmation was open. Preview the backup again.';
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const BACKUP_KIND_LABELS = {
+  backup: 'Backup',
+  'pre-upgrade': 'Pre-upgrade backup',
+  'pre-restore': 'Pre-restore backup',
+  'pre-password-change': 'Pre-password-change backup',
+  'pre-import': 'Pre-import backup'
+};
+
+// "12 Nov 2026, 14:03" in local time, from a backup name's millisecond timestamp.
+function formatBackupDate(ms) {
+  const date = new Date(ms);
+  const pad = (value) => String(value).padStart(2, '0');
+  return `${date.getDate()} ${MONTHS[date.getMonth()]} ${date.getFullYear()}, ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
 
 function createIpcHandlers({
   ipcMain,
@@ -29,7 +48,7 @@ function createIpcHandlers({
   quit,
   settings = {}
 }) {
-  const { idleLockMs, clipboardClearMs, copyTokenMs, zoomStep } = { ...DEFAULTS, ...settings };
+  const { idleLockMs, clipboardClearMs, copyTokenMs, restoreTokenMs, zoomStep } = { ...DEFAULTS, ...settings };
   let operationQueue = Promise.resolve();
   let idleLockTimer = null;
   let lastActivityAt = 0;
@@ -37,6 +56,11 @@ function createIpcHandlers({
   let copiedPasswordDigest;
   let pendingCopy;
   let copyTokenTimer = null;
+  let pendingRestore;
+  let restoreTokenTimer = null;
+  // Increases on every cancel event, so a restore can tell that one happened while its
+  // confirmation was open (docs/PHASE-2A-DESIGN.md, part D, step 3).
+  let restoreCancelCount = 0;
 
   function serializeVaultOperation(operation) {
     const result = operationQueue.then(operation, operation);
@@ -49,12 +73,17 @@ function createIpcHandlers({
     return Boolean(frame && frame === event.sender?.mainFrame && frame.url === pageUrl);
   }
 
-  function registerVaultHandler(channel, operation) {
+  // `cancelsRestoreToken` is for handlers registered from other files (the CSV import) whose call
+  // must drop any restore token, like lock and unlock do here.
+  function registerVaultHandler(channel, operation, { cancelsRestoreToken = false } = {}) {
     ipcMain.handle(channel, async (event, ...args) => {
       if (!isTrustedFrame(event)) return { success: false, error: 'Unauthorized caller.' };
 
       try {
-        return await serializeVaultOperation(() => operation(...args));
+        return await serializeVaultOperation(() => {
+          if (cancelsRestoreToken) cancelRestoreToken();
+          return operation(...args);
+        });
       } catch (error) {
         return { success: false, error: error.message };
       }
@@ -89,6 +118,7 @@ function createIpcHandlers({
 
     clearIdleLock();
     clearCopyConfirmation();
+    cancelRestoreToken();
     getVault().lock();
     getAllWindows().forEach((win) => {
       if (!win.isDestroyed()) win.webContents.send('vault:auto-locked');
@@ -115,6 +145,192 @@ function createIpcHandlers({
     if (copyTokenTimer) clearTimeout(copyTokenTimer);
     copyTokenTimer = null;
     pendingCopy = undefined;
+  }
+
+  // Restore tokens (docs/PHASE-2A-DESIGN.md, part C). A successful preview issues one, valid for
+  // restoreTokenMs and used up by the restore (2A.3). Only one is outstanding at a time. It holds
+  // what was previewed, never the password: the backup id and digest, the vault file's state,
+  // whether the vault was unlocked, the date from the backup's name and the preview summary.
+  function dropRestoreToken() {
+    if (restoreTokenTimer) clearTimeout(restoreTokenTimer);
+    restoreTokenTimer = null;
+    pendingRestore = undefined;
+  }
+
+  // Lock, auto-lock, unlock, a password change, a CSV import, shutDown and any failed preview or
+  // restore call this.
+  function cancelRestoreToken() {
+    dropRestoreToken();
+    restoreCancelCount += 1;
+  }
+
+  function issueRestoreToken({ id, backupDigest, vaultState, unlocked, createdAt, summary }) {
+    dropRestoreToken();
+    pendingRestore = {
+      token: crypto.randomUUID(),
+      expiresAt: Date.now() + restoreTokenMs,
+      id,
+      backupDigest,
+      vaultState,
+      unlocked,
+      createdAt,
+      summary
+    };
+    restoreTokenTimer = setTimeout(dropRestoreToken, restoreTokenMs);
+    return pendingRestore.token;
+  }
+
+  // Uses the token up whatever the outcome: a wrong, expired or mismatched token also drops the
+  // outstanding one. Returns what was stored with it.
+  function takeRestoreToken(token, id) {
+    const pending = pendingRestore;
+    dropRestoreToken();
+    if (!pending || typeof token !== 'string' || token !== pending.token || pending.id !== id || Date.now() >= pending.expiresAt) {
+      throw new Error(RESTORE_TOKEN_ERROR);
+    }
+    const { token: _token, expiresAt: _expiresAt, ...record } = pending;
+    return record;
+  }
+
+  const restoreTokens = {
+    issue: issueRestoreToken,
+    take: takeRestoreToken,
+    cancel: cancelRestoreToken,
+    get cancelCount() { return restoreCancelCount; }
+  };
+
+  async function previewBackup(id, password) {
+    // A new preview replaces the outstanding token, and a failed one leaves none.
+    cancelRestoreToken();
+    const vault = getVault();
+    const { summary, digest } = await vault.previewBackup(id, password);
+    const vaultState = await vault.getVaultState();
+    const token = issueRestoreToken({
+      id,
+      backupDigest: digest,
+      vaultState,
+      unlocked: vault.isUnlocked(),
+      createdAt: vault.validateBackupId(id).createdAt,
+      summary
+    });
+    return { success: true, summary, token };
+  }
+
+  // Transactional restore (docs/PHASE-2A-DESIGN.md, part D). Works locked or unlocked. Order:
+  //   1. check the argument types, then use the token up (whatever happens next);
+  //   2. note the cancel count and the lock state, which must match the token's;
+  //   3. native confirmation, built only from the token record;
+  //   4. after it, stop if a cancel event happened or the lock state changed (the idle lock may
+  //      fire while the dialog is open);
+  //   5. vault.restoreBackup re-checks both files and writes, inside the write transaction;
+  //   6. on success the vault is locked and copy and restore tokens are cleared.
+  // Any failure cancels the restore token.
+  async function restoreBackup(id, token) {
+    const vault = getVault();
+    try {
+      vault.validateBackupId(id);
+      if (typeof token !== 'string') throw new Error(RESTORE_TOKEN_ERROR);
+      const record = takeRestoreToken(token, id);
+      const cancelCount = restoreCancelCount;
+      const unlocked = vault.isUnlocked();
+      if (unlocked !== record.unlocked) throw new Error(RESTORE_TOKEN_ERROR);
+
+      const confirmation = await dialog.showMessageBox(getFocusedWindow() ?? getAllWindows()[0] ?? null, {
+        type: 'warning',
+        buttons: ['Restore', 'Cancel'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        title: 'Restore backup',
+        ...describeRestore(vault, record)
+      });
+      if (confirmation.response !== 0) {
+        armIdleLock();
+        return { success: false, cancelled: true };
+      }
+      if (restoreCancelCount !== cancelCount || vault.isUnlocked() !== unlocked) {
+        throw new Error(RESTORE_CHANGED_ERROR);
+      }
+
+      const { preRestoreBackup } = await vault.restoreBackup(id, {
+        backupDigest: record.backupDigest,
+        vaultState: record.vaultState
+      });
+      clearIdleLock();
+      clearCopyConfirmation();
+      cancelRestoreToken();
+      vault.lock();
+      return { success: true, restoredFrom: id, preRestoreBackup };
+    } catch (error) {
+      cancelRestoreToken();
+      throw error;
+    }
+  }
+
+  // The confirmation text, from the token record only: the date in the backup's name, its kind
+  // and the previewed entry count.
+  function describeRestore(vault, record) {
+    const { kind } = vault.validateBackupId(record.id);
+    const count = record.summary.entryCount;
+    const entries = `${count} ${count === 1 ? 'entry' : 'entries'}`;
+    const saved = record.vaultState === 'absent'
+      ? 'There is no current vault file, so there is nothing to save first.'
+      : 'The current vault is saved first, as a pre-restore backup. Changes made after this backup was created will be replaced.';
+    return {
+      message: `Replace the current vault with the backup from ${formatBackupDate(record.createdAt)} (${entries})?`,
+      detail: [
+        `Kind: ${BACKUP_KIND_LABELS[kind]}.`,
+        saved,
+        'The vault then locks. Unlock it with the master password that was in use when this backup was made.'
+      ].join('\n')
+    };
+  }
+
+  // Manual backup cleanup (docs/PHASE-2A-DESIGN.md, part E). Order:
+  //   1. unlocked, and 1 to 1000 unique valid ids;
+  //   2. fresh uncapped scan; any id missing from it refuses the whole request;
+  //   3. native confirmation (Cancel is the default), built from that scan;
+  //   4. after it, stop if the vault locked meanwhile;
+  //   5. vault.deleteBackups takes a new scan inside the write transaction and applies the guards.
+  async function deleteBackups(ids) {
+    requireUnlocked();
+    const vault = getVault();
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 1000 || new Set(ids).size !== ids.length) {
+      throw new Error('Choose between 1 and 1000 different backups to delete.');
+    }
+    ids.forEach((id) => vault.validateBackupId(id));
+
+    const cancelCount = restoreCancelCount;
+    const scan = new Map((await vault.listBackups()).map((item) => [item.id, item]));
+    if (ids.some((id) => !scan.has(id))) throw new Error('Some of these backups no longer exist. Refresh the list.');
+
+    const times = ids.map((id) => Date.parse(scan.get(id).createdAt));
+    const oldest = formatBackupDate(Math.min(...times));
+    const newest = formatBackupDate(Math.max(...times));
+    const message = ids.length === 1
+      ? `Permanently delete 1 backup from ${oldest}? This can't be undone.`
+      : `Permanently delete ${ids.length} backups from ${oldest} to ${newest}? This can't be undone.`;
+    const confirmation = await dialog.showMessageBox(getFocusedWindow() ?? getAllWindows()[0] ?? null, {
+      type: 'warning',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Delete backups',
+      message,
+      detail: 'Some backups are kept to protect your recovery options, such as the newest valid backup.'
+    });
+    if (confirmation.response !== 0) {
+      armIdleLock();
+      return { success: false, cancelled: true };
+    }
+    // The idle lock may have fired while the dialog was open.
+    requireUnlocked();
+    if (restoreCancelCount !== cancelCount) throw new Error('The vault was locked. Nothing was deleted.');
+
+    const { deleted, kept } = await vault.deleteBackups(ids);
+    armIdleLock();
+    return { success: true, deleted, kept };
   }
 
   function requireUnlocked() {
@@ -226,6 +442,32 @@ function createIpcHandlers({
       backupName: await getVault().createBackup()
     }));
 
+    // Read only, and works locked or unlocked (docs/PHASE-2A-DESIGN.md, part B). The scan itself
+    // is uncapped; the window gets at most MAX_LISTED_BACKUPS items, valid ones first.
+    registerVaultHandler('vault:list-backups', async () => {
+      const items = await getVault().listBackups();
+      armIdleLock();
+      return {
+        success: true,
+        items: items.slice(0, MAX_LISTED_BACKUPS),
+        truncated: items.length > MAX_LISTED_BACKUPS
+      };
+    });
+
+    // Works locked or unlocked, gated by the backup's own password (part C). Writes nothing.
+    registerVaultHandler('vault:preview-backup', async (id, password) => {
+      const result = await previewBackup(id, password);
+      armIdleLock();
+      return result;
+    });
+
+    // Replaces vault.json with a previewed backup, after a native confirmation (part D). Works
+    // locked or unlocked; the vault is always locked afterwards.
+    registerVaultHandler('vault:restore-backup', (id, token) => restoreBackup(id, token));
+
+    // Permanently deletes chosen backups after a native confirmation (part E). Needs the vault unlocked.
+    registerVaultHandler('vault:delete-backups', (ids) => deleteBackups(ids));
+
     registerVaultHandler('vault:open-folder', async () => {
       const error = await shell.openPath(path.dirname(getVault().filePath));
       if (error) throw new Error(error);
@@ -233,6 +475,7 @@ function createIpcHandlers({
     });
 
     registerVaultHandler('vault:unlock', async (masterPassword, confirmation) => {
+      cancelRestoreToken();
       const result = await getVault().unlock(masterPassword, confirmation);
       armIdleLock();
       return { success: true, created: result.created, migrated: result.migrated };
@@ -241,6 +484,7 @@ function createIpcHandlers({
     registerVaultHandler('vault:lock', () => {
       clearIdleLock();
       clearCopyConfirmation();
+      cancelRestoreToken();
       getVault().lock();
       return { success: true };
     });
@@ -302,6 +546,7 @@ function createIpcHandlers({
     });
 
     registerVaultHandler('vault:change-master-password', async (currentPassword, newPassword, confirmation) => {
+      cancelRestoreToken();
       const { backupName } = await getVault().changeMasterPassword(currentPassword, newPassword, confirmation);
       clearCopyConfirmation();
       armIdleLock();
@@ -321,15 +566,16 @@ function createIpcHandlers({
     });
   }
 
-  // Locks the vault and drops any pending copy, for window close and app quit.
+  // Locks the vault and drops any pending copy or restore token, for window close and app quit.
   function shutDown({ clearClipboard = false } = {}) {
     clearIdleLock();
     clearCopyConfirmation();
+    cancelRestoreToken();
     getVault()?.lock();
     if (clearClipboard) clearCopiedPassword();
   }
 
-  return { registerAll, registerVaultHandler, isTrustedFrame, armIdleLock, lockIfIdle, shutDown };
+  return { registerAll, registerVaultHandler, isTrustedFrame, armIdleLock, lockIfIdle, shutDown, restoreTokens };
 }
 
 // The app needs no camera, microphone, notifications or other permissions, so deny them all.

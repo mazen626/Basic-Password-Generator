@@ -1,7 +1,9 @@
 const assert = require('node:assert/strict');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const test = require('node:test');
+const { registerCsvHandlers } = require('../csv-transfer');
 const { createIpcHandlers, denyAllPermissions, DEFAULTS } = require('../ipc-handlers');
 const { MASTER_PASSWORD, createVault, makeEntry } = require('./helpers');
 
@@ -465,7 +467,7 @@ test('vault:change-master-password changes the password and drops any pending co
 
   const result = await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password');
   assert.equal(result.success, true);
-  assert.match(result.backupName, /^vault-backup-\d+-[0-9a-f-]{36}\.bak$/);
+  assert.match(result.backupName, /^vault-before-password-change-\d{13}-[0-9a-f-]{36}\.bak$/);
   assert.deepEqual(await h.invoke('vault:copy-generated', 'secret', token), { success: false, error: 'Confirm the copy action first.' });
 
   vault.lock();
@@ -482,4 +484,576 @@ test('vault:change-master-password reports errors and refuses a locked vault', a
   vault.lock();
   assert.deepEqual(await h.invoke('vault:change-master-password', MASTER_PASSWORD, 'a brand new master password', 'a brand new master password'),
     { success: false, error: 'Unlock the vault first.' });
+});
+
+// --- Phase 2A milestone 2A.1: backup list ---
+
+const backupName = (ms, n) => `vault-backup-${ms}-${String(n).padStart(8, '0')}-0000-4000-8000-000000000000.bak`;
+
+test('vault:list-backups works while locked and rejects other callers', async (t) => {
+  const { vault } = await createVault(t);
+  const made = await vault.createBackup();
+  vault.lock();
+  const h = harness(t, vault);
+
+  const result = await h.invoke('vault:list-backups');
+  assert.equal(result.success, true);
+  assert.equal(result.truncated, false);
+  assert.deepEqual(result.items.map((item) => [item.id, item.kind, item.status, item.passwordHint, item.version]),
+    [[made, 'backup', 'valid', 'current', 3]]);
+  assert.match(result.items[0].createdAt, /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/);
+  assert.equal(vault.isUnlocked(), false);
+
+  const subframe = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  assert.deepEqual(await h.invokeAs(subframe, 'vault:list-backups'), { success: false, error: 'Unauthorized caller.' });
+});
+
+test('vault:list-backups counts as activity while unlocked', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const { vault } = await createVault(t, { unlocked: false });
+  const h = harness(t, vault);
+
+  await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD);
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal((await h.invoke('vault:list-backups')).success, true);
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal(vault.isUnlocked(), true);
+  t.mock.timers.tick(60 * 1000);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('vault:list-backups sends at most 1,000 items, valid ones first, newest first', async (t) => {
+  const { vault, vaultPath, directory } = await createVault(t);
+  const contents = await fs.promises.readFile(vaultPath);
+  const start = 1762900000000;
+  const valid = [];
+  for (let n = 0; n < 1500; n++) {
+    valid.push(backupName(start + n, n));
+    await fs.promises.writeFile(path.join(directory, valid[n]), contents);
+  }
+  const junk = [];
+  for (let n = 0; n < 300; n++) {
+    // Junk is newer than every valid file, so it would come first if sorted by date alone.
+    junk.push(backupName(start + 10000 + n, 5000 + n));
+    await fs.promises.writeFile(path.join(directory, junk[n]), 'junk');
+  }
+  const h = harness(t, vault);
+
+  let result = await h.invoke('vault:list-backups');
+  assert.equal(result.success, true);
+  assert.equal(result.truncated, true);
+  assert.equal(result.items.length, 1000);
+  assert.deepEqual(result.items.map((item) => item.id), valid.slice(500).reverse());
+
+  for (const name of valid.slice(0, 1200)) await fs.promises.rm(path.join(directory, name));
+  result = await h.invoke('vault:list-backups');
+  assert.equal(result.truncated, false);
+  assert.equal(result.items.length, 600);
+  assert.deepEqual(result.items.slice(0, 300).map((item) => item.status), Array(300).fill('valid'));
+  assert.deepEqual(result.items.slice(300).map((item) => item.id), junk.slice().reverse());
+
+  await fs.promises.writeFile(path.join(directory, backupName(start - 1, 9999)), 'junk');
+  for (let n = 0; n < 401; n++) {
+    await fs.promises.writeFile(path.join(directory, backupName(start + 20000 + n, 7000 + n)), contents);
+  }
+  result = await h.invoke('vault:list-backups');
+  assert.equal(result.truncated, true);
+  assert.equal(result.items.length, 1000);
+  assert.equal(result.items.filter((item) => item.status === 'valid').length, 701);
+  assert.equal(result.items.findIndex((item) => item.status !== 'valid'), 701, 'invalid items only fill the places left');
+});
+
+// --- Phase 2A milestone 2A.2: restore preview and restore tokens ---
+
+const OPEN_ERROR = 'Incorrect password, or the backup is damaged.';
+const TOKEN_ERROR = 'Preview the backup again before restoring.';
+const PASSWORD_ERROR = 'Enter the master password for this backup (1 to 1024 characters).';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const sha256 = (bytes) => crypto.createHash('sha256').update(bytes).digest('hex');
+
+async function folderBytes(directory) {
+  const files = {};
+  for (const name of (await fs.promises.readdir(directory)).sort()) {
+    files[name] = (await fs.promises.readFile(path.join(directory, name))).toString('base64');
+  }
+  return files;
+}
+
+// A vault with two entries and a backup of it, left locked unless asked otherwise.
+async function previewFixture(t, { unlocked = false } = {}) {
+  const fixture = await createVault(t);
+  await fixture.vault.saveEntry(makeEntry({ site: 'a.example', username: 'alice', password: 'pw-alpha-123', backupCodes: ['code-one'] }));
+  await fixture.vault.saveEntry(makeEntry({ site: 'b.example' }));
+  const id = await fixture.vault.createBackup();
+  if (!unlocked) fixture.vault.lock();
+  return { ...fixture, id };
+}
+
+const assertTokenGone = (h, token, id) => assert.throws(() => h.ipc.restoreTokens.take(token, id), { message: TOKEN_ERROR });
+
+test('vault:preview-backup works locked, returns metadata and a token, and writes nothing', async (t) => {
+  const { vault, vaultPath, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const before = await folderBytes(directory);
+  const salt = JSON.parse(await fs.promises.readFile(vaultPath, 'utf8')).salt;
+
+  const result = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  assert.deepEqual(Object.keys(result).sort(), ['success', 'summary', 'token']);
+  assert.equal(result.success, true);
+  assert.match(result.token, UUID_PATTERN);
+  assert.deepEqual(Object.keys(result.summary).sort(), ['entryCount', 'newestUpdatedAt', 'oldestCreatedAt', 'version', 'willUpgrade']);
+  assert.equal(result.summary.entryCount, 2);
+  assert.equal(result.summary.version, 3);
+  assert.equal(result.summary.willUpgrade, false);
+  const text = JSON.stringify(result);
+  for (const secret of ['a.example', 'alice', 'pw-alpha-123', 'code-one', salt]) {
+    assert.equal(text.includes(secret), false, `the response must not contain ${secret}`);
+  }
+  assert.equal(vault.isUnlocked(), false, 'a preview never unlocks');
+  assert.deepEqual(await folderBytes(directory), before, 'vault.json and the backups are byte-identical');
+
+  const record = h.ipc.restoreTokens.take(result.token, id);
+  assert.deepEqual(record, {
+    id,
+    backupDigest: sha256(await fs.promises.readFile(path.join(directory, id))),
+    vaultState: sha256(await fs.promises.readFile(vaultPath)),
+    unlocked: false,
+    createdAt: vault.validateBackupId(id).createdAt,
+    summary: result.summary
+  });
+  assertTokenGone(h, result.token, id);
+});
+
+test('vault:preview-backup records an absent vault file', async (t) => {
+  const { vault, vaultPath, id } = await previewFixture(t);
+  await fs.promises.rm(vaultPath);
+  const h = harness(t, vault);
+  const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  assert.equal(h.ipc.restoreTokens.take(token, id).vaultState, 'absent');
+});
+
+test('vault:preview-backup keeps an unlocked session working and counts as activity', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1762900000000 }); // backup names need a 13-digit time
+  const { vault, id } = await previewFixture(t);
+  const h = harness(t, vault);
+
+  await h.invoke('vault:unlock', MASTER_PASSWORD, MASTER_PASSWORD);
+  const key = vault.key;
+  t.mock.timers.tick(4 * 60 * 1000);
+  const result = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  assert.equal(result.success, true);
+  assert.equal(vault.key, key, 'the session key is the same');
+  assert.equal((await h.invoke('vault:load-entries')).entries.length, 2);
+  assert.equal(h.ipc.restoreTokens.take(result.token, id).unlocked, true);
+
+  t.mock.timers.tick(4 * 60 * 1000);
+  assert.equal(vault.isUnlocked(), true, 'the preview postponed the idle lock');
+  t.mock.timers.tick(60 * 1000);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('vault:preview-backup issues a token only on success, and a failed preview drops the outstanding one', async (t) => {
+  const { vault, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const before = await folderBytes(directory);
+
+  const first = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  const failed = await h.invoke('vault:preview-backup', id, 'not the right password');
+  assert.deepEqual(failed, { success: false, error: OPEN_ERROR });
+  assertTokenGone(h, first.token, id);
+
+  const missing = 'vault-backup-1762900000000-0f8e2b7c-1a2b-4c3d-8e9f-a0b1c2d3e4f5.bak';
+  const bad = [
+    [['../vault.json', MASTER_PASSWORD], 'Invalid backup id.'],
+    [['x'.repeat(129), MASTER_PASSWORD], 'Invalid backup id.'],
+    [[42, MASTER_PASSWORD], 'Invalid backup id.'],
+    [[], 'Invalid backup id.'],
+    [[id.replace('.bak', '0.bak'), MASTER_PASSWORD], 'Invalid backup id.'],
+    [[id], PASSWORD_ERROR],
+    [[id, ''], PASSWORD_ERROR],
+    [[id, 'x'.repeat(1025)], PASSWORD_ERROR],
+    [[id, { toString: () => MASTER_PASSWORD }], PASSWORD_ERROR],
+    [[missing, MASTER_PASSWORD], 'Backup not found.']
+  ];
+  for (const [args, error] of bad) {
+    const outstanding = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+    assert.deepEqual(await h.invoke('vault:preview-backup', ...args), { success: false, error }, JSON.stringify(args));
+    assertTokenGone(h, outstanding.token, id);
+  }
+  assert.deepEqual(await folderBytes(directory), before);
+});
+
+test('a second preview replaces the restore token', async (t) => {
+  const { vault, id } = await previewFixture(t, { unlocked: true });
+  const other = await vault.createBackup();
+  vault.lock();
+  const h = harness(t, vault);
+
+  // Taking any token uses up the one outstanding, so each check needs its own pair of previews.
+  let first = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  let second = await h.invoke('vault:preview-backup', other, MASTER_PASSWORD);
+  assert.notEqual(first.token, second.token);
+  assertTokenGone(h, first.token, id);
+
+  first = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  second = await h.invoke('vault:preview-backup', other, MASTER_PASSWORD);
+  assert.equal(h.ipc.restoreTokens.take(second.token, other).id, other);
+});
+
+test('a restore token works once, only for its backup, and a wrong one also uses it up', async (t) => {
+  const { vault, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const other = id.replace(/-\d{13}-/, '-1762900000000-');
+
+  for (const [token, forId] of [[undefined, id], [42, id], ['not-the-token', id], [null, id], ['REAL', other]]) {
+    const { token: real } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+    assert.throws(() => h.ipc.restoreTokens.take(token === 'REAL' ? real : token, forId), { message: TOKEN_ERROR });
+    assertTokenGone(h, real, id);
+  }
+  assert.throws(() => h.ipc.restoreTokens.take(undefined, undefined), { message: TOKEN_ERROR }, 'no token outstanding');
+});
+
+test('a restore token expires after 2 minutes, by its timer or by the clock', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1762900000000 });
+  const { vault, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  assert.equal(DEFAULTS.restoreTokenMs, 2 * 60 * 1000);
+
+  let { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  t.mock.timers.tick(DEFAULTS.restoreTokenMs - 1);
+  assert.equal(h.ipc.restoreTokens.take(token, id).id, id, 'still valid just before expiry');
+
+  ({ token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD));
+  t.mock.timers.tick(DEFAULTS.restoreTokenMs);
+  assertTokenGone(h, token, id);
+
+  // A suspended computer: the clock jumps without the timer firing.
+  ({ token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD));
+  t.mock.timers.setTime(Date.now() + DEFAULTS.restoreTokenMs);
+  assertTokenGone(h, token, id);
+});
+
+test('lock, auto-lock, unlock, a password change, a CSV import and shutDown cancel the restore token', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1762900000000 });
+  const { vault, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const csvPath = path.join(directory, 'passwords.csv');
+  await fs.promises.writeFile(csvPath, 'name,url,username,password\nNew,https://new.example,bob,Sup3r-Secret!\n');
+  const picks = [null, csvPath];
+  registerCsvHandlers({
+    registerVaultHandler: h.ipc.registerVaultHandler,
+    getVault: () => vault,
+    getParentWindow: () => null,
+    dialog: {
+      showOpenDialog: async () => {
+        const pick = picks.shift();
+        return pick ? { canceled: false, filePaths: [pick] } : { canceled: true, filePaths: [] };
+      },
+      showMessageBox: async () => ({ response: 1 }) // import and keep the CSV file
+    },
+    getDefaultDirectory: () => directory,
+    onActivity: h.ipc.armIdleLock
+  });
+  const preview = async () => {
+    const result = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+    assert.equal(result.success, true);
+    return result.token;
+  };
+  const unlockAndPreview = async () => {
+    assert.equal((await h.invoke('vault:unlock', MASTER_PASSWORD)).success, true);
+    return preview();
+  };
+  const NEW_PASSWORD = 'a brand new master password';
+  // Each action returns the token it must cancel; the ones that need an unlocked vault unlock first.
+  const cancels = {
+    'lock': async (token) => {
+      assert.equal((await h.invoke('vault:lock')).success, true);
+      return token;
+    },
+    'unlock': async (token) => {
+      assert.equal((await h.invoke('vault:unlock', MASTER_PASSWORD)).success, true);
+      return token;
+    },
+    'failed unlock': async (token) => {
+      assert.equal((await h.invoke('vault:unlock', 'wrong password!')).success, false);
+      return token;
+    },
+    'auto-lock': async () => {
+      // The idle lock (5 minutes) must fire while the token (2 minutes) is still valid, and a
+      // preview counts as activity, so issue this token through the store just before it fires.
+      assert.equal((await h.invoke('vault:unlock', MASTER_PASSWORD)).success, true);
+      t.mock.timers.tick(DEFAULTS.idleLockMs - 1);
+      const token = h.ipc.restoreTokens.issue({ id, backupDigest: 'digest', vaultState: 'absent', unlocked: true, createdAt: 0, summary: {} });
+      t.mock.timers.tick(1);
+      assert.equal(vault.isUnlocked(), false);
+      return token;
+    },
+    'password change': async () => {
+      const token = await unlockAndPreview();
+      assert.equal((await h.invoke('vault:change-master-password', MASTER_PASSWORD, NEW_PASSWORD, NEW_PASSWORD)).success, true);
+      // Put the old password back without a token outstanding, so later steps work the same way.
+      assert.equal((await h.invoke('vault:change-master-password', NEW_PASSWORD, MASTER_PASSWORD, MASTER_PASSWORD)).success, true);
+      return token;
+    },
+    'CSV import cancelled at the file picker': async () => {
+      const token = await unlockAndPreview();
+      assert.deepEqual(await h.invoke('vault:import-csv'), { success: false, cancelled: true });
+      return token;
+    },
+    'CSV import': async () => {
+      const token = await unlockAndPreview();
+      const result = await h.invoke('vault:import-csv');
+      assert.equal(result.success, true);
+      assert.equal(result.added, 1);
+      return token;
+    },
+    'shutDown': async (token) => {
+      h.ipc.shutDown();
+      return token;
+    }
+  };
+
+  for (const [label, action] of Object.entries(cancels)) {
+    const token = await action(await preview());
+    assert.throws(() => h.ipc.restoreTokens.take(token, id), { message: TOKEN_ERROR }, label);
+  }
+});
+
+test('every restore-token cancel event increases the cancel count', async (t) => {
+  const { vault, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  let count = h.ipc.restoreTokens.cancelCount;
+  const bumped = () => {
+    const next = h.ipc.restoreTokens.cancelCount;
+    assert.ok(next > count);
+    count = next;
+  };
+  await h.invoke('vault:lock');
+  bumped();
+  await h.invoke('vault:unlock', MASTER_PASSWORD);
+  bumped();
+  h.ipc.lockIfIdle(); // not idle yet: no lock, no cancel
+  assert.equal(h.ipc.restoreTokens.cancelCount, count);
+  await h.invoke('vault:preview-backup', id, 'wrong password!');
+  bumped();
+  h.ipc.restoreTokens.cancel();
+  bumped();
+  h.ipc.shutDown();
+  bumped();
+});
+
+test('vault:preview-backup rejects callers that are not the app page, and leaves the token alone', async (t) => {
+  const { vault, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  const before = await folderBytes(directory);
+  const countBefore = h.ipc.restoreTokens.cancelCount;
+
+  const subframe = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  const website = { senderFrame: { url: 'https://example.com/' }, sender: { mainFrame: null } };
+  website.sender.mainFrame = website.senderFrame;
+  for (const event of [subframe, website, {}]) {
+    assert.deepEqual(await h.invokeAs(event, 'vault:preview-backup', id, MASTER_PASSWORD), { success: false, error: 'Unauthorized caller.' });
+  }
+  assert.equal(h.ipc.restoreTokens.cancelCount, countBefore);
+  assert.deepEqual(await folderBytes(directory), before);
+  assert.equal(h.ipc.restoreTokens.take(token, id).id, id, 'the token from the trusted preview still works');
+});
+
+// --- Phase 2A milestone 2A.3: restore (the full cases are in vault-backup-restore.test.js) ---
+
+test('vault:restore-backup rejects callers that are not the app page, and leaves the token and files alone', async (t) => {
+  const { vault, directory, id } = await previewFixture(t, { unlocked: true });
+  await vault.saveEntry(makeEntry({ site: 'c.example' })); // so the backup differs from the vault
+  const h = harness(t, vault);
+  const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  const before = await folderBytes(directory);
+  const countBefore = h.ipc.restoreTokens.cancelCount;
+
+  const subframe = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  const website = { senderFrame: { url: 'https://example.com/' }, sender: { mainFrame: null } };
+  website.sender.mainFrame = website.senderFrame;
+  for (const event of [subframe, website, {}]) {
+    assert.deepEqual(await h.invokeAs(event, 'vault:restore-backup', id, token), { success: false, error: 'Unauthorized caller.' });
+  }
+  assert.equal(h.dialogs.length, 0, 'no confirmation opens for an untrusted caller');
+  assert.equal(h.ipc.restoreTokens.cancelCount, countBefore);
+  assert.deepEqual(await folderBytes(directory), before);
+  assert.equal(vault.isUnlocked(), true);
+
+  const result = await h.invoke('vault:restore-backup', id, token);
+  assert.equal(result.success, true, 'the token from the trusted preview still works');
+  assert.equal(result.restoredFrom, id);
+  assert.equal(h.dialogs.length, 1);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('vault:restore-backup checks its arguments and returns errors without paths', async (t) => {
+  const { vault, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const before = await folderBytes(directory);
+  for (const [args, error] of [
+    [[], 'Invalid backup id.'],
+    [[42, 'token'], 'Invalid backup id.'],
+    [['..\\vault.json', 'token'], 'Invalid backup id.'],
+    [[id], TOKEN_ERROR],
+    [[id, 42], TOKEN_ERROR],
+    [[id, ['token']], TOKEN_ERROR]
+  ]) {
+    const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+    const result = await h.invoke('vault:restore-backup', ...args);
+    assert.deepEqual(result, { success: false, error }, JSON.stringify(args));
+    assert.equal(result.error.includes(directory), false);
+    assertTokenGone(h, token, id);
+  }
+  assert.equal(h.dialogs.length, 0);
+  assert.deepEqual(await folderBytes(directory), before);
+});
+
+// --- Phase 2A milestone 2A.4: delete backups (the guard cases are in vault-backup-delete.test.js) ---
+
+const DELETE_MS = 1762900000000;
+const deleteName = (n) => `vault-backup-${DELETE_MS + n * 86400000}-0f8e2b7c-1a2b-4c3d-8e9f-${String(n).padStart(12, '0')}.bak`;
+
+// An unlocked vault with a valid newest backup and `junk` invalid ones (the deletable kind).
+async function deleteFixture(t, junk = 3) {
+  const fixture = await createVault(t);
+  const keep = deleteName(50);
+  fs.copyFileSync(fixture.vaultPath, path.join(fixture.directory, keep));
+  const ids = [];
+  for (let n = 1; n <= junk; n += 1) {
+    ids.push(deleteName(n));
+    fs.writeFileSync(path.join(fixture.directory, deleteName(n)), 'not a vault');
+  }
+  return { ...fixture, keep, ids };
+}
+
+const present = (fixture, id) => fs.existsSync(path.join(fixture.directory, id));
+
+test('vault:delete-backups confirms with the count and dates from the scan, then deletes', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result, { success: true, deleted: f.ids, kept: [] });
+  assert.equal(h.dialogs.length, 1);
+  const [dialog] = h.dialogs;
+  assert.equal(dialog.message, `Permanently delete 3 backups from ${formatLocal(DELETE_MS + 86400000)} to ${formatLocal(DELETE_MS + 3 * 86400000)}? This can't be undone.`);
+  assert.deepEqual([dialog.buttons, dialog.defaultId, dialog.cancelId], [['Delete', 'Cancel'], 1, 1]);
+  f.ids.forEach((id) => assert.equal(present(f, id), false));
+  assert.equal(present(f, f.keep), true);
+});
+
+function formatLocal(ms) {
+  const d = new Date(ms);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = (v) => String(v).padStart(2, '0');
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+test('vault:delete-backups uses singular wording for one backup and only the requested dates', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  await h.invoke('vault:delete-backups', [f.ids[1]]);
+  assert.equal(h.dialogs[0].message, `Permanently delete 1 backup from ${formatLocal(DELETE_MS + 2 * 86400000)}? This can't be undone.`);
+});
+
+test('cancelling vault:delete-backups deletes nothing', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault, { answers: [1] });
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, cancelled: true });
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups reports guarded backups as kept, with reasons', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const result = await h.invoke('vault:delete-backups', [f.keep, f.ids[0]]);
+  assert.deepEqual(result, {
+    success: true,
+    deleted: [f.ids[0]],
+    kept: [{ id: f.keep, reason: 'only valid backup' }]
+  });
+});
+
+test('vault:delete-backups refuses the whole request when an id is not in the fresh scan', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const missing = deleteName(40);
+  const result = await h.invoke('vault:delete-backups', [f.ids[0], missing]);
+  assert.deepEqual(result, { success: false, error: 'Some of these backups no longer exist. Refresh the list.' });
+  assert.equal(h.dialogs.length, 0);
+  assert.equal(present(f, f.ids[0]), true);
+
+  // A folder named like a backup is not in the scan either.
+  fs.mkdirSync(path.join(f.directory, missing));
+  assert.equal((await h.invoke('vault:delete-backups', [missing])).success, false);
+  assert.equal(present(f, missing), true);
+});
+
+test('a backup removed between the dialog and the transaction is reported as kept', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    fs.rmSync(path.join(f.directory, f.ids[0]));
+    return Array.prototype.push.call(this, options);
+  };
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result.kept, [{ id: f.ids[0], reason: 'no longer exists' }]);
+  assert.deepEqual(result.deleted, f.ids.slice(1));
+});
+
+test('vault:delete-backups aborts when the vault locks while the dialog is open', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    f.vault.lock();
+    return Array.prototype.push.call(this, options);
+  };
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, error: 'Unlock the vault first.' });
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups is refused while locked, without a dialog', async (t) => {
+  const f = await deleteFixture(t);
+  f.vault.lock();
+  const h = harness(t, f.vault);
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, error: 'Unlock the vault first.' });
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups checks its arguments before any dialog', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const bad = [undefined, 'x', {}, [], [f.ids[0], f.ids[0]], [1], ['vault.json'], ['..\\vault.json'],
+    Array.from({ length: 1001 }, (_, i) => deleteName(i))];
+  for (const ids of bad) {
+    const result = await h.invoke('vault:delete-backups', ids);
+    assert.equal(result.success, false);
+    assert.equal(JSON.stringify(result).includes(f.directory), false);
+  }
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups rejects callers that are not the app page', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const event = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  assert.deepEqual(await h.invokeAs(event, 'vault:delete-backups', f.ids), { success: false, error: 'Unauthorized caller.' });
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups aborts when a cancel event happens while the dialog is open, even if still unlocked', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    h.ipc.restoreTokens.cancel();
+    return Array.prototype.push.call(this, options);
+  };
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result, { success: false, error: 'The vault was locked. Nothing was deleted.' });
+  assert.equal(f.vault.isUnlocked(), true);
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
 });

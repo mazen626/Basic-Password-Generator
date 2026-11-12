@@ -13,7 +13,7 @@
 
 VLAUTR keeps your credentials on your own machine. Everything is encrypted with a key derived from your master password, nothing is sent over the network, and the master password is never written to disk.
 
-> VLAUTR is the project's working name and may change.
+> VLAUTR is the project's official name.
 
 ## Screenshots
 
@@ -116,10 +116,13 @@ Both are in the **File** menu next to **Lock vault**, and both need the vault to
 
 The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the installed app, and the portable build all use this same file. Uninstalling VLAUTR leaves this folder in place, so your vault and backups are kept. Backups are saved next to it:
 
-- `vault-backup-<timestamp>-<id>.bak`: backups you create from the unlock screen.
+- `vault-backup-<timestamp>-<id>.bak`: backups you create with "Create encrypted backup" or "Create backup now".
+- `vault-before-password-change-<timestamp>-<id>.bak`: made automatically before the master password is changed.
+- `vault-before-import-<timestamp>-<id>.bak`: made automatically before a CSV import.
+- `vault-before-restore-<timestamp>-<id>.bak`: your vault as it was just before a restore.
 - `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
-Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Restore…** opens one with its password, shows how many entries it holds, and can then restore it after a confirmation. Your current vault is always saved first as a `vault-before-restore-*` backup, and the vault locks afterwards: unlock it with the master password that was in use when the backup was made. If the vault won't open, **Restore from backup…** on the unlock screen does the same. To clean up, tick backups and choose **Delete selected…**: they are deleted permanently after a confirmation, and the newest good backup, the newest one that opens with your current password, and the newest pre-restore backup are always kept.
 
 ## Project structure
 
@@ -144,7 +147,7 @@ Development is planned in phases:
 | --- | --- |
 | 0. Stabilization | Packaging checks, broader tests, recovery scenarios, threat model |
 | 1. Security foundation | Less plaintext in the interface, ID-based copy, safer writes, master-password change |
-| 2. Vault management | Backup manager and restore, password history, secure notes, imports |
+| 2. Vault management | Backup manager and restore, password history, secure notes, CSV import and export that work with browsers and other password managers |
 | 3. Password intelligence | Password health, weak and reused password detection, passphrases |
 | 4. Application experience | Dashboard, custom categories, shortcuts, onboarding, accessibility |
 | 5. Multi-device | Optional end-to-end encrypted sync |

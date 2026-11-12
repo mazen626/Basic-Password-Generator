@@ -21,6 +21,22 @@ const MAX_BACKUP_CODES = 50;
 const MAX_BACKUP_CODE_LENGTH = 128;
 const MAX_MASTER_PASSWORD_LENGTH = 1024;
 const CATEGORIES = new Set(['login', 'email', 'finance', 'identity', 'work', 'other']);
+const MAX_BACKUP_ID_LENGTH = 128;
+// File-name prefixes of the backups the app writes, by kind. Pre-upgrade backups are named after
+// the vault file instead (see backupLegacyVault).
+const BACKUP_PREFIXES = {
+  backup: 'vault-backup',
+  'pre-restore': 'vault-before-restore',
+  'pre-password-change': 'vault-before-password-change',
+  'pre-import': 'vault-before-import'
+};
+// The end of every backup name: a 13-digit millisecond timestamp, then a UUID in the lowercase
+// hex that crypto.randomUUID() writes.
+const BACKUP_SUFFIX = '-(\\d{13})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\.bak';
+// One message for a wrong password and for tampered or invalid backup contents, so a preview
+// never tells the two apart.
+const BACKUP_OPEN_ERROR = 'Incorrect password, or the backup is damaged.';
+const PRE_RESTORE_ERROR = 'Could not save a copy of the current vault, so nothing was restored.';
 
 class PasswordVault {
   constructor(filePath) {
@@ -64,7 +80,9 @@ class PasswordVault {
     }
   }
 
-  async createBackup() {
+  // `kind` says why the backup is made (decision 5 of docs/PHASE-2A-DESIGN.md). The window's
+  // "Create backup" passes nothing, so it always writes a plain `vault-backup-*` file.
+  async createBackup(kind = 'backup') {
     let contents;
     try {
       contents = await fs.readFile(this.filePath);
@@ -73,7 +91,204 @@ class PasswordVault {
       throw error;
     }
 
-    return writeBackup(this.filePath, contents);
+    return writeBackup(this.filePath, contents, kind);
+  }
+
+  // Checks a backup file name sent by the window and returns its kind and date. It must match one
+  // of the backup name patterns exactly, so a path, `..` or a drive letter can never get through.
+  validateBackupId(id) {
+    const info = parseBackupId(id, path.basename(this.filePath));
+    if (!info) throw new Error('Invalid backup id.');
+    return info;
+  }
+
+  // Read-only inventory of the backups next to the vault file (docs/PHASE-2A-DESIGN.md, part B).
+  // Each file is only parsed and checked against the envelope rules: no key is derived and nothing
+  // is decrypted. Returns every backup found, valid ones first, each group newest first.
+  async listBackups() {
+    const directory = path.dirname(this.filePath);
+    const vaultFileName = path.basename(this.filePath);
+    let names;
+    try {
+      names = await fs.readdir(directory);
+    } catch (error) {
+      if (error.code === 'ENOENT') return [];
+      throw new Error('Could not read the backup folder.');
+    }
+
+    const current = await readKeySettings(this.filePath);
+    const items = [];
+    for (const name of names) {
+      const info = parseBackupId(name, vaultFileName);
+      if (!info) continue;
+      const item = await inspectBackup(path.join(directory, name), name, info, current);
+      if (item) items.push(item);
+    }
+
+    return items.sort((a, b) => (
+      (a.status === 'valid' ? 0 : 1) - (b.status === 'valid' ? 0 : 1) ||
+      b.createdAt.localeCompare(a.createdAt) ||
+      a.id.localeCompare(b.id)
+    ));
+  }
+
+  // Restore preview (docs/PHASE-2A-DESIGN.md, part C). Opens one backup with its own password and
+  // describes it, without touching the vault: nothing is written, and the vault's key and lock
+  // state are never used or changed, so it works locked or unlocked. Version 1 and 2 backups are
+  // also upgraded in memory (a dry run), so one that would fail its upgrade on unlock fails here.
+  // Returns metadata only, plus the SHA-256 (hex) of the exact bytes that were checked.
+  async previewBackup(id, password) {
+    const info = this.validateBackupId(id);
+    if (typeof password !== 'string' || password.length === 0 || password.length > MAX_MASTER_PASSWORD_LENGTH) {
+      throw new Error('Enter the master password for this backup (1 to 1024 characters).');
+    }
+
+    const contents = await readBackupFile(path.join(path.dirname(this.filePath), id));
+    const digest = crypto.createHash('sha256').update(contents).digest('hex');
+
+    let envelope;
+    try {
+      envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+    } catch {
+      throw new Error('Backup file is invalid or corrupted.');
+    }
+    if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) {
+      throw new Error('Backup file is invalid or corrupted.');
+    }
+
+    const key = await deriveKey(password, Buffer.from(envelope.salt, 'base64'), envelope.iterations);
+    let entries;
+    try {
+      // decryptEntries checks the entries against the rules of the backup's own version.
+      entries = decryptEntries(envelope, key);
+      if (envelope.version !== FORMAT_VERSION) validateEntries(migrateEntries(entries));
+    } catch {
+      throw new Error(BACKUP_OPEN_ERROR);
+    } finally {
+      key.fill(0);
+    }
+
+    return { summary: summarizeBackup(entries, envelope.version), digest };
+  }
+
+  // Manual backup cleanup (docs/PHASE-2A-DESIGN.md, part E). Needs the vault unlocked. Runs as one
+  // write transaction with its own fresh, uncapped scan, so the guards never come from the window.
+  //
+  // Guard rule, computed on that scan. These backups are never deleted, even if requested:
+  //   1. the newest valid backup (reported "only valid backup" when it is the sole valid one, else
+  //      "newest valid backup"), so a valid backup always remains if any exists;
+  //   2. the newest valid backup whose password hint is `current`;
+  //   3. the newest valid pre-restore backup, or, when no pre-restore backup is valid, the newest
+  //      pre-restore file of any status.
+  // Because these stay on disk whatever is requested, the set that remains always holds them.
+  // Invalid, too-large and unreadable files are otherwise deletable. A requested id that is no
+  // longer in the scan is reported as kept ("no longer exists"). Each file is deleted with a plain
+  // unlink after an lstat shows a regular file; one failure doesn't stop the rest. Messages and
+  // results never include a path.
+  async deleteBackups(ids) {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 1000 || new Set(ids).size !== ids.length) {
+      throw new Error('Choose between 1 and 1000 different backups to delete.');
+    }
+    ids.forEach((id) => this.validateBackupId(id));
+    const directory = path.dirname(this.filePath);
+
+    return this.runWriteTransaction(async () => {
+      this.requireKey();
+      const scan = await this.listBackups();
+      const protectedIds = computeProtectedBackups(scan);
+      const present = new Set(scan.map((item) => item.id));
+      const deleted = [];
+      const kept = [];
+      for (const id of ids) {
+        if (!present.has(id)) {
+          kept.push({ id, reason: 'no longer exists' });
+        } else if (protectedIds.has(id)) {
+          kept.push({ id, reason: protectedIds.get(id) });
+        } else if (await unlinkRegularFile(path.join(directory, id))) {
+          deleted.push(id);
+        } else {
+          kept.push({ id, reason: 'could not be deleted' });
+        }
+      }
+      return { deleted, kept };
+    });
+  }
+
+  // SHA-256 (hex) of the current vault file's bytes, read once, or 'absent' when there is none.
+  // Streamed, so a vault of any size can be compared later without holding it in memory.
+  async getVaultState() {
+    let handle;
+    try {
+      handle = await fs.open(this.filePath, 'r');
+    } catch (error) {
+      if (error.code === 'ENOENT') return 'absent';
+      throw new Error('Could not read the vault file.');
+    }
+    try {
+      const hash = crypto.createHash('sha256');
+      const buffer = Buffer.alloc(1024 * 1024);
+      for (;;) {
+        const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+        if (bytesRead === 0) break;
+        hash.update(buffer.subarray(0, bytesRead));
+      }
+      return hash.digest('hex');
+    } catch {
+      throw new Error('Could not read the vault file.');
+    } finally {
+      await handle.close();
+    }
+  }
+
+  // Transactional restore (docs/PHASE-2A-DESIGN.md, part D, steps 4 to 7). `expected` is what the
+  // preview recorded: the backup's SHA-256 and the vault file's state (SHA-256 or 'absent'). Runs
+  // as one write transaction, so no other write can happen in between. Order:
+  //   1. read vault.json once and require its state to match;
+  //   2. read the backup again, check its envelope and require its digest to match;
+  //   3. refuse a backup identical to the current vault;
+  //   4. save and verify the pre-restore copy (only when vault.json exists);
+  //   5. write the backup bytes through the .tmp + flush + rename path;
+  //   6. lock the vault.
+  // Only the bytes read in steps 1 and 2 are used after the checks. Any failure before the rename
+  // leaves vault.json and the key untouched. Errors never include a path.
+  async restoreBackup(id, expected) {
+    const info = this.validateBackupId(id);
+    if (!expected || typeof expected.backupDigest !== 'string' || typeof expected.vaultState !== 'string') {
+      throw new Error('Preview the backup again before restoring.');
+    }
+
+    return this.runWriteTransaction(async () => {
+      const current = await readVaultForRestore(this.filePath);
+      if ((current ? current.digest : 'absent') !== expected.vaultState) {
+        throw new Error('The vault changed after the preview. Preview the backup again.');
+      }
+
+      const backup = await readBackupFile(path.join(path.dirname(this.filePath), id));
+      try {
+        const envelope = validateEnvelope(JSON.parse(backup.toString('utf8')));
+        if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) throw new Error('version');
+      } catch {
+        throw new Error('Backup file is invalid or corrupted.');
+      }
+      if (sha256Hex(backup) !== expected.backupDigest) {
+        throw new Error('The backup changed after the preview. Preview the backup again.');
+      }
+      if (current && current.bytes && backup.equals(current.bytes)) {
+        throw new Error('This backup is the same as the current vault.');
+      }
+
+      const preRestoreBackup = current ? await writePreRestoreCopy(this.filePath, current) : null;
+
+      try {
+        await writeVaultBytes(this.filePath, backup);
+      } catch {
+        throw new Error('Could not write the restored vault. The current vault was not changed.');
+      }
+
+      // The restored vault may use another master password, so the old key must not stay in use.
+      this.lock();
+      return { preRestoreBackup };
+    });
   }
 
   async unlock(masterPassword, confirmation) {
@@ -164,7 +379,7 @@ class PasswordVault {
         currentKey.fill(0);
       }
 
-      const backupName = await writeBackup(this.filePath, contents);
+      const backupName = await writeBackup(this.filePath, contents, 'pre-password-change');
       const salt = crypto.randomBytes(SALT_LENGTH);
       const newKey = await deriveKey(newPassword, salt, PBKDF2_ITERATIONS);
       try {
@@ -463,10 +678,184 @@ async function backupLegacyVault(filePath, contents, version) {
 }
 
 // Saves an exact copy of the vault file next to it, flushed to disk, and returns its name.
-async function writeBackup(filePath, contents) {
-  const backupName = `vault-backup-${Date.now()}-${crypto.randomUUID()}.bak`;
+async function writeBackup(filePath, contents, kind = 'backup') {
+  if (!Object.hasOwn(BACKUP_PREFIXES, kind)) throw new Error('Unknown backup kind.');
+  const backupName = `${BACKUP_PREFIXES[kind]}-${Date.now()}-${crypto.randomUUID()}.bak`;
   await writeAndFlush(path.join(path.dirname(filePath), backupName), contents, 'wx');
   return backupName;
+}
+
+// Maps each protected backup id to its reason (see PasswordVault.deleteBackups). `scan` is the
+// output of listBackups: valid first, then newest first.
+function computeProtectedBackups(scan) {
+  const protectedIds = new Map();
+  const protect = (item, reason) => {
+    if (item && !protectedIds.has(item.id)) protectedIds.set(item.id, reason);
+  };
+  const valid = scan.filter((item) => item.status === 'valid');
+  protect(valid[0], valid.length === 1 ? 'only valid backup' : 'newest valid backup');
+  protect(valid.find((item) => item.passwordHint === 'current'), 'newest backup that opens with the current password');
+  protect(scan.find((item) => item.kind === 'pre-restore'), 'newest pre-restore backup');
+  return protectedIds;
+}
+
+// Deletes one file only if it is a regular file (never a folder, symlink or junction). Returns
+// true when it was deleted.
+async function unlinkRegularFile(filePath) {
+  try {
+    const stats = await fs.lstat(filePath);
+    if (!stats.isFile()) return false;
+    await fs.unlink(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Returns { kind, createdAt (ms), legacyVersion } for a recognized backup file name, or null.
+// Every pattern is a full match without the `i` flag, so each file has exactly one accepted
+// spelling, and none allows a separator, `..` or a drive letter.
+function parseBackupId(id, vaultFileName = 'vault.json') {
+  if (typeof id !== 'string' || id.length === 0 || id.length > MAX_BACKUP_ID_LENGTH) return null;
+
+  const legacy = new RegExp(`^${escapeRegExp(vaultFileName)}\\.v([12])${BACKUP_SUFFIX}$`).exec(id);
+  if (legacy) return { kind: 'pre-upgrade', createdAt: Number(legacy[2]), legacyVersion: Number(legacy[1]) };
+
+  for (const [kind, prefix] of Object.entries(BACKUP_PREFIXES)) {
+    const match = new RegExp(`^${prefix}${BACKUP_SUFFIX}$`).exec(id);
+    if (match) return { kind, createdAt: Number(match[1]), legacyVersion: null };
+  }
+  return null;
+}
+
+// Reads at most `limit` bytes, and returns null when the file holds more than that.
+async function readFileBounded(filePath, limit) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const chunks = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.alloc(Math.min(1024 * 1024, limit + 1 - total));
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      chunks.push(buffer.subarray(0, bytesRead));
+      total += bytesRead;
+      if (total > limit) return null;
+    }
+    return Buffer.concat(chunks, total);
+  } finally {
+    await handle.close();
+  }
+}
+
+// The salt and iteration count of the current vault file, or null if it is missing, too large,
+// unreadable or invalid. Used only for comparison with backups and never returned.
+async function readKeySettings(filePath) {
+  try {
+    const contents = await readFileBounded(filePath, MAX_VAULT_BYTES);
+    if (!contents) return null;
+    const envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+    return { salt: envelope.salt, iterations: envelope.iterations };
+  } catch {
+    return null;
+  }
+}
+
+// Builds one inventory item, or returns null when the file is not listed (it disappeared, or it
+// is not a regular file). Only the envelope is checked.
+async function inspectBackup(backupPath, id, info, current) {
+  const item = {
+    id,
+    kind: info.kind,
+    createdAt: new Date(info.createdAt).toISOString(),
+    size: 0,
+    version: null,
+    status: 'unreadable',
+    passwordHint: 'unknown'
+  };
+
+  let stats;
+  try {
+    stats = await fs.lstat(backupPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return item;
+  }
+  // Symlinks, junctions and folders are never listed.
+  if (!stats.isFile()) return null;
+  item.size = stats.size;
+  if (stats.size > MAX_VAULT_BYTES) return { ...item, status: 'too-large' };
+
+  let contents;
+  try {
+    contents = await readFileBounded(backupPath, MAX_VAULT_BYTES);
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    return item;
+  }
+  if (!contents) return { ...item, status: 'too-large' };
+
+  let envelope;
+  try {
+    envelope = validateEnvelope(JSON.parse(contents.toString('utf8')));
+  } catch {
+    return { ...item, status: 'invalid' };
+  }
+  if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) {
+    return { ...item, status: 'invalid' };
+  }
+
+  let passwordHint = 'unknown';
+  if (current) {
+    passwordHint = envelope.salt === current.salt && envelope.iterations === current.iterations ? 'current' : 'other';
+  }
+  return { ...item, version: envelope.version, status: 'valid', passwordHint };
+}
+
+// Reads one backup for a preview, with the same rules as the inventory (inspectBackup): only a
+// regular file (never a symlink, junction or folder), at most MAX_VAULT_BYTES. Errors never
+// include the path.
+async function readBackupFile(backupPath) {
+  let stats;
+  try {
+    stats = await fs.lstat(backupPath);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('Backup not found.');
+    throw new Error('Could not read the backup.');
+  }
+  if (!stats.isFile()) throw new Error('Backup not found.');
+  if (stats.size > MAX_VAULT_BYTES) throw new Error('Backup file is too large.');
+
+  let contents;
+  try {
+    contents = await readFileBounded(backupPath, MAX_VAULT_BYTES);
+  } catch (error) {
+    if (error.code === 'ENOENT') throw new Error('Backup not found.');
+    throw new Error('Could not read the backup.');
+  }
+  if (!contents) throw new Error('Backup file is too large.');
+  return contents;
+}
+
+// Metadata only: no site names, usernames, passwords, notes, codes or key settings. Dates come
+// from the entries as stored; a version 1 entry without a date is left out of the range rather
+// than given the time of the preview.
+function summarizeBackup(entries, version) {
+  // The timestamps are already validated ISO strings; compare them as dates.
+  const pick = (values, isBetter) => values
+    .filter((value) => typeof value === 'string')
+    .reduce((best, value) => (best === null || isBetter(Date.parse(value), Date.parse(best)) ? value : best), null);
+  return {
+    entryCount: entries.length,
+    newestUpdatedAt: pick(entries.map((entry) => entry.updatedAt), (a, b) => a > b),
+    oldestCreatedAt: pick(entries.map((entry) => entry.createdAt), (a, b) => a < b),
+    version,
+    willUpgrade: version !== FORMAT_VERSION
+  };
 }
 
 async function readVaultFile(filePath) {
@@ -482,12 +871,98 @@ async function readVaultFile(filePath) {
   }
 }
 
+function sha256Hex(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+// Streams a file's SHA-256 (hex). Errors are passed on as they are.
+async function hashFile(filePath) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.alloc(1024 * 1024);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return hash.digest('hex');
+  } finally {
+    await handle.close();
+  }
+}
+
+// Reads vault.json once for a restore: null when there is none, otherwise { bytes, digest }. The
+// digest always covers the whole file. A file over MAX_VAULT_BYTES is not kept in memory
+// (`bytes` is null); its pre-restore copy is then made with copyFile and checked by this digest.
+async function readVaultForRestore(filePath) {
+  let handle;
+  try {
+    handle = await fs.open(filePath, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error('Could not read the vault file.');
+  }
+  try {
+    const hash = crypto.createHash('sha256');
+    let chunks = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.alloc(1024 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      hash.update(chunk);
+      total += bytesRead;
+      if (chunks && total <= MAX_VAULT_BYTES) chunks.push(chunk);
+      else chunks = null;
+    }
+    return { bytes: chunks ? Buffer.concat(chunks, total) : null, digest: hash.digest('hex') };
+  } catch {
+    throw new Error('Could not read the vault file.');
+  } finally {
+    await handle.close();
+  }
+}
+
+// Saves the vault as it was read for the restore to `vault-before-restore-<ms>-<uuid>.bak`,
+// flushed, never overwriting a file, then reads the copy back and checks its SHA-256. On any
+// failure the partial copy is removed (if this call created it) and the restore stops.
+async function writePreRestoreCopy(filePath, current) {
+  const name = `${BACKUP_PREFIXES['pre-restore']}-${Date.now()}-${crypto.randomUUID()}.bak`;
+  const copyPath = path.join(path.dirname(filePath), name);
+  try {
+    if (current.bytes) {
+      await writeAndFlush(copyPath, current.bytes, 'wx');
+    } else {
+      await fs.copyFile(filePath, copyPath, fs.constants.COPYFILE_EXCL);
+      const handle = await fs.open(copyPath, 'r+');
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
+    if (await hashFile(copyPath) !== current.digest) throw new Error('digest mismatch');
+  } catch (error) {
+    // EEXIST means another file already had this name: it is not ours to remove.
+    if (error.code !== 'EEXIST') await fs.rm(copyPath, { force: true }).catch(() => {});
+    throw new Error(PRE_RESTORE_ERROR);
+  }
+  return name;
+}
+
 async function writeVaultFile(filePath, envelope) {
+  return writeVaultBytes(filePath, JSON.stringify(envelope, null, 2));
+}
+
+// Replaces the vault file with `contents` (a string or bytes): written to vault.json.tmp, flushed,
+// then renamed over vault.json. On failure the .tmp is removed and vault.json is unchanged.
+async function writeVaultBytes(filePath, contents) {
   const temporaryPath = `${filePath}.tmp`;
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 
   try {
-    const contents = JSON.stringify(envelope, null, 2);
     if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
       throw new Error('Vault has reached its maximum file size.');
     }
@@ -717,5 +1192,7 @@ PasswordVault.validateEntry = validateEntry;
 PasswordVault.createBackupCode = createBackupCode;
 PasswordVault.CATEGORIES = CATEGORIES;
 PasswordVault.LIMITS = { MAX_ENTRIES, MAX_SITE_LENGTH };
+// Backup id check, shared with the later preview, restore and delete steps.
+PasswordVault.parseBackupId = parseBackupId;
 
 module.exports = PasswordVault;

@@ -521,7 +521,7 @@ function registerImport({ registerVaultHandler, getVault, getParentWindow, dialo
     });
     if (choice.response === IMPORT_CANCEL) return { success: false, cancelled: true };
 
-    const backupName = await vault.createBackup();
+    const backupName = await vault.createBackup('pre-import');
     const result = await importEntries(vault, parsed.entries);
 
     let csvDeleted = false;
@@ -534,7 +534,7 @@ function registerImport({ registerVaultHandler, getVault, getParentWindow, dialo
 
     onActivity();
     return { success: true, ...result, backupName, csvDeleted, ...report };
-  });
+  }, { cancelsRestoreToken: true }); // an import changes the vault, so any restore preview is stale
 }
 
 // ---------------------------------------------------------------------------------------

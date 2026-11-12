@@ -148,6 +148,28 @@
   .change-password-form h2 { margin-bottom: 14px; }
   .change-password-status { min-height: 16px; margin: 10px 0 0; color: #ff9ead; font-size: 12px; }
   .change-password-actions { gap: 8px; }
+  .backups-dialog { width: min(640px, calc(100vw - 32px)); }
+  .backups-note { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
+  .backups-status { min-height: 16px; margin: 0 0 8px; color: var(--muted); font-size: 12px; }
+  .backups-status.error { color: #ff9ead; }
+  .backups-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+  .backups-item { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 10px; border: 1px solid var(--divider); border-radius: 8px; background: var(--surface); font-size: 12px; }
+  .backups-date { color: var(--text); font-weight: 600; }
+  .backups-size { color: var(--label); font: 12px/1.4 var(--font-mono); text-align: right; }
+  .backups-meta { color: var(--muted); overflow-wrap: anywhere; }
+  .backups-state { text-align: right; color: var(--label); }
+  .backups-state.bad { color: #ff9ead; }
+  .backups-id { grid-column: 1 / -1; color: var(--muted); font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
+  .backups-actions { gap: 8px; flex-wrap: wrap; }
+  .backups-pick { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+  .backups-pick input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: #8b5cf6; }
+  .backups-pick input:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+  .backups-preview { display: grid; gap: 10px; }
+  .backups-preview-title { margin: 0; font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+  .backups-preview-status { min-height: 16px; margin: 0; color: #ff9ead; font-size: 12px; }
+  .backups-preview-summary p { margin: 0 0 6px; font-size: 13px; color: var(--text); overflow-wrap: anywhere; }
+  .backups-preview-summary .backups-note { color: var(--muted); font-size: 12px; }
+  .backups-preview-summary[hidden] { display: none; }
   .password-row { display: flex; gap: 7px; }
   .password-row input { flex: 1; min-width: 0; }
   .password-row button { flex: none; min-height: 32px; padding: 6px 12px; font-size: 11px; }
@@ -179,6 +201,7 @@
         <div class="menu-list" id="fileMenu" role="menu" hidden>
           <button type="button" role="menuitem" data-action="lock">Lock vault</button>
           <button type="button" role="menuitem" id="changePasswordMenuItem">Change master password&hellip;</button>
+          <button type="button" role="menuitem" id="backupsMenuItem">Backups&hellip;</button>
           <button type="button" role="menuitem" data-csv="import">Import CSV&hellip;</button>
           <button type="button" role="menuitem" data-csv="export">Export CSV&hellip;</button>
           <div class="menu-sep" role="separator"></div>
@@ -254,11 +277,12 @@
         </div>
         <button id="unlockButton" type="submit">Unlock vault</button>
       </form>
-      <div id="recoveryActions" class="hidden">
+      <div id="recoveryActions">
         <p id="recoveryNotice" role="status"></p>
         <div class="buttons">
-          <button id="backupVaultBtn" type="button">Create encrypted backup</button>
-          <button id="openVaultFolderBtn" type="button">Open vault folder</button>
+          <button id="backupVaultBtn" class="hidden" type="button">Create encrypted backup</button>
+          <button id="openVaultFolderBtn" class="hidden" type="button">Open vault folder</button>
+          <button id="restoreBackupBtn" type="button">Restore from backup&hellip;</button>
         </div>
       </div>
       <p id="unlockStatus" role="status" aria-live="polite"></p>
@@ -387,6 +411,40 @@
       <button type="submit" id="changePasswordSubmit" class="primary-button">Change password</button>
     </div>
   </form>
+</dialog>
+<dialog id="backupsDialog" class="csv-report backups-dialog" aria-labelledby="backupsTitle">
+  <h2 id="backupsTitle">Backups</h2>
+  <p id="backupsStatus" class="backups-status" role="status"></p>
+  <div id="backupsListView">
+    <p id="backupsNote" class="backups-note" hidden>Showing the newest 1,000 backups.</p>
+    <ul id="backupsList" class="backups-list"></ul>
+    <div class="csv-report-actions backups-actions">
+      <button type="button" id="backupsCreate" class="primary-button">Create backup now</button>
+      <button type="button" id="backupsSelectAll" class="hidden">Select all</button>
+      <button type="button" id="backupsDelete" class="hidden" disabled>Delete selected&hellip;</button>
+      <button type="button" id="backupsClose">Close</button>
+    </div>
+  </div>
+  <div id="backupsPreview" class="backups-preview hidden">
+    <h3 id="backupsPreviewTitle" class="backups-preview-title"></h3>
+    <p class="backups-note">This backup opens with the master password that was in use when it was made. If you restore it, that password becomes your master password again.</p>
+    <div class="field">
+      <label for="backupsPreviewPassword">Backup master password</label>
+      <input type="password" id="backupsPreviewPassword" autocomplete="off" maxlength="1024">
+    </div>
+    <p id="backupsPreviewStatus" class="backups-preview-status" role="status"></p>
+    <div id="backupsPreviewSummary" class="backups-preview-summary" hidden>
+      <p id="backupsPreviewCounts"></p>
+      <p id="backupsPreviewUpgrade" hidden></p>
+      <div class="csv-report-actions backups-actions">
+        <button type="button" id="backupsRestoreRun" class="primary-button hidden">Restore this backup</button>
+      </div>
+    </div>
+    <div class="csv-report-actions backups-actions">
+      <button type="button" id="backupsPreviewBack">Back</button>
+      <button type="button" id="backupsPreviewRun" class="primary-button">Preview</button>
+    </div>
+  </div>
 </dialog>
 <script src="./backup-codes.js"></script>
 <script src="./renderer.js"></script>

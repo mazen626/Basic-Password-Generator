@@ -599,7 +599,9 @@ async function initializeUnlockForm() {
 
   confirmationField.hidden = result.exists;
   confirmationInput.required = !result.exists;
-  recoveryActions.classList.toggle("hidden", !result.exists);
+  document.getElementById("backupVaultBtn").classList.toggle("hidden", !result.exists);
+  document.getElementById("openVaultFolderBtn").classList.toggle("hidden", !result.exists);
+  recoveryNotice.classList.toggle("hidden", !result.exists);
   recoveryNotice.textContent = result.corrupted
     ? "The vault file appears damaged or unsupported. It has not been changed. Create an encrypted backup before trying recovery."
     : result.legacy
@@ -614,6 +616,8 @@ async function initializeUnlockForm() {
 
 function clearUnlockedView(message) {
   closeChangePasswordDialog();
+  // A Backups dialog opened from the locked screen must survive a stray lock event.
+  if (!vaultPanel.classList.contains("hidden")) closeBackupsDialog();
   entriesList.replaceChildren();
   savedEntries = [];
   searchInput.value = "";
@@ -662,6 +666,7 @@ async function unlockVault() {
     return;
   }
 
+  closeBackupsDialog();
   unlockPanel.classList.add("hidden");
   vaultPanel.classList.remove("hidden");
   unlockStatus.textContent = "";
@@ -794,6 +799,7 @@ favoriteFilter.addEventListener("change", renderEntries);
 const menuTriggers = [...document.querySelectorAll(".menu-trigger")];
 const lockMenuItem = document.querySelector('[data-action="lock"]');
 const changePasswordMenuItem = document.getElementById("changePasswordMenuItem");
+const backupsMenuItem = document.getElementById("backupsMenuItem");
 
 function menuListFor(trigger) {
   return document.getElementById(trigger.getAttribute("aria-controls"));
@@ -810,6 +816,7 @@ function openMenu(trigger, focusFirst = false) {
   closeMenus();
   lockMenuItem.disabled = vaultPanel.classList.contains("hidden");
   changePasswordMenuItem.disabled = vaultPanel.classList.contains("hidden");
+  backupsMenuItem.disabled = vaultPanel.classList.contains("hidden");
   trigger.setAttribute("aria-expanded", "true");
   const list = menuListFor(trigger);
   list.hidden = false;
@@ -900,6 +907,422 @@ changePasswordForm.addEventListener("submit", (event) => {
     setVaultStatus("Master password changed. Your previous backups still need the old password.");
   });
 });
+
+// Backups (File menu): a read-only list of the backup files in the vault folder.
+const backupsDialog = document.getElementById("backupsDialog");
+const backupsList = document.getElementById("backupsList");
+const backupsStatus = document.getElementById("backupsStatus");
+const backupsNote = document.getElementById("backupsNote");
+const backupsCreate = document.getElementById("backupsCreate");
+const backupsDelete = document.getElementById("backupsDelete");
+const backupsSelectAll = document.getElementById("backupsSelectAll");
+let backupsCanDelete = false; // true only when the dialog was opened while the vault is unlocked
+let backupsSession = 0; // bumps on every close so late responses can be ignored
+let deleteInFlight = false;
+const backupsSelection = new Set();
+const backupsKnown = new Map(); // id -> list item, for dates in the "kept" message
+
+const BACKUP_KINDS = {
+  backup: "Backup",
+  "pre-upgrade": "Pre-upgrade",
+  "pre-restore": "Pre-restore",
+  "pre-password-change": "Before password change",
+  "pre-import": "Before CSV import"
+};
+const BACKUP_HINTS = {
+  current: "Current password",
+  other: "May need an earlier master password",
+  unknown: "Unknown"
+};
+const BACKUP_STATUSES = {
+  valid: ["✓", "OK"],
+  "too-large": ["⚠", "Too large"],
+  invalid: ["✗", "Damaged or not a backup"],
+  unreadable: ["✗", "Can't be read"]
+};
+
+function formatBackupSize(bytes) {
+  if (!Number.isFinite(bytes) || bytes < 0) return "?";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function formatBackupDate(iso) {
+  const date = new Date(iso);
+  return Number.isNaN(date.getTime()) ? "Unknown date" : date.toLocaleString();
+}
+
+function setBackupsStatus(text, isError = false) {
+  backupsStatus.textContent = text;
+  backupsStatus.classList.toggle("error", isError);
+}
+
+function backupCheckboxes() {
+  return Array.from(backupsList.querySelectorAll(".backups-pick input"));
+}
+
+function updateBackupsSelectionUi() {
+  const boxes = backupCheckboxes();
+  backupsDelete.classList.toggle("hidden", !backupsCanDelete);
+  backupsSelectAll.classList.toggle("hidden", !backupsCanDelete || !boxes.length);
+  const count = backupsSelection.size;
+  backupsDelete.textContent = count ? `Delete selected (${count})…` : "Delete selected…";
+  if (!deleteInFlight) backupsDelete.disabled = count === 0;
+  backupsSelectAll.textContent = boxes.length && count === boxes.length ? "Clear selection" : "Select all";
+  backupsSelectAll.disabled = deleteInFlight;
+}
+
+function clearBackupsList() {
+  backupsSelection.clear();
+  backupsKnown.clear();
+  backupsList.replaceChildren();
+  updateBackupsSelectionUi();
+  backupsNote.hidden = true;
+  setBackupsStatus("");
+}
+
+function renderBackupItem(item) {
+  const li = document.createElement("li");
+  li.className = "backups-item";
+  const add = (className, text, title) => {
+    const node = document.createElement("span");
+    node.className = className;
+    node.textContent = text;
+    if (title) node.title = title;
+    li.append(node);
+    return node;
+  };
+  if (backupsCanDelete) {
+    const pick = document.createElement("label");
+    pick.className = "backups-date backups-pick";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = backupsSelection.has(item.id);
+    box.disabled = deleteInFlight;
+    box.dataset.id = String(item.id);
+    box.setAttribute("aria-label", `Select backup from ${formatBackupDate(item.createdAt)}, ${BACKUP_KINDS[item.kind] || "Backup"}`);
+    box.addEventListener("change", () => {
+      if (box.checked) backupsSelection.add(item.id);
+      else backupsSelection.delete(item.id);
+      updateBackupsSelectionUi();
+    });
+    const text = document.createElement("span");
+    text.textContent = formatBackupDate(item.createdAt);
+    pick.append(box, text);
+    li.append(pick);
+  } else {
+    add("backups-date", formatBackupDate(item.createdAt));
+  }
+  add("backups-size", formatBackupSize(item.size));
+  add("backups-meta", BACKUP_KINDS[item.kind] || "Backup");
+  const [icon, label] = BACKUP_STATUSES[item.status] || ["?", "Unknown"];
+  const state = add("backups-state", `${icon} ${label}`);
+  if (item.status !== "valid") state.classList.add("bad");
+  add("backups-meta", BACKUP_HINTS[item.passwordHint] || BACKUP_HINTS.unknown);
+  if (item.status === "valid") {
+    const previewButton = makeButton("Restore…", () => openBackupPreview(item, previewButton));
+    previewButton.setAttribute("aria-label", `Restore backup from ${formatBackupDate(item.createdAt)}`);
+    li.append(previewButton);
+  }
+  add("backups-id", String(item.id), String(item.id));
+  return li;
+}
+
+async function loadBackups() {
+  clearBackupsList();
+  setBackupsStatus("Loading backups...");
+  let result;
+  try {
+    result = await window.electronAPI.listBackups();
+  } catch {
+    result = { success: false, error: "Could not load the backup list." };
+  }
+  if (!backupsDialog.open) return;
+  if (!result || !result.success) {
+    setBackupsStatus((result && result.error) || "Could not load the backup list.", true);
+    return;
+  }
+  if (!result.items.length) {
+    setBackupsStatus("No backups yet.");
+    return;
+  }
+  setBackupsStatus("");
+  for (const item of result.items) backupsKnown.set(item.id, item);
+  backupsList.replaceChildren(...result.items.map(renderBackupItem));
+  backupsNote.hidden = !result.truncated;
+  updateBackupsSelectionUi();
+}
+
+function describeKept(kept) {
+  const parts = kept.map((entry) => {
+    const item = backupsKnown.get(entry.id);
+    const label = item ? formatSummaryDate(item.createdAt, true) : String(entry.id);
+    return `${label} — ${entry.reason}`;
+  });
+  return `Kept ${kept.length}: ${parts.join("; ")}`;
+}
+
+function setDeleteBusy(busy) {
+  deleteInFlight = busy;
+  document.getElementById("backupsClose").disabled = busy;
+  backupCheckboxes().forEach((box) => { box.disabled = busy; });
+  updateBackupsSelectionUi();
+}
+
+async function runBackupDelete() {
+  if (!backupsCanDelete || deleteInFlight || !backupsSelection.size) return;
+  const ids = Array.from(backupsSelection);
+  const session = backupsSession;
+  setDeleteBusy(true);
+  await withDisabled(backupsDelete, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.deleteBackups(ids);
+    } catch {
+      result = { success: false, error: "Could not delete the selected backups." };
+    }
+    // A reply that arrives after the dialog was closed belongs to an earlier session: closing
+    // already reset the busy state, and a newer delete may be running now.
+    if (!backupsDialog.open || session !== backupsSession) return;
+    setDeleteBusy(false);
+    if (result && result.cancelled) {
+      setBackupsStatus("Nothing was deleted.");
+    } else if (!result || !result.success) {
+      setBackupsStatus((result && result.error) || "Could not delete the selected backups.", true);
+    } else {
+      const deleted = Array.isArray(result.deleted) ? result.deleted.length : 0;
+      const kept = Array.isArray(result.kept) ? result.kept : [];
+      // Resolve dates before the reload replaces the known list.
+      const keptText = kept.length ? describeKept(kept) : "";
+      await loadBackups();
+      if (!backupsDialog.open || session !== backupsSession) return;
+      const text = `Deleted ${deleted} ${deleted === 1 ? "backup" : "backups"}.`;
+      setBackupsStatus(keptText ? `${text} ${keptText}` : text);
+    }
+  });
+  updateBackupsSelectionUi();
+}
+backupsDelete.addEventListener("click", runBackupDelete);
+backupsSelectAll.addEventListener("click", () => {
+  if (deleteInFlight) return;
+  const boxes = backupCheckboxes();
+  const selectAll = backupsSelection.size !== boxes.length;
+  backupsSelection.clear();
+  for (const box of boxes) {
+    box.checked = selectAll;
+    if (selectAll) backupsSelection.add(box.dataset.id);
+  }
+  updateBackupsSelectionUi();
+});
+
+// Restore preview step: shows what a backup holds without changing anything.
+const backupsListView = document.getElementById("backupsListView");
+const backupsPreview = document.getElementById("backupsPreview");
+const backupsPreviewTitle = document.getElementById("backupsPreviewTitle");
+const backupsPreviewPassword = document.getElementById("backupsPreviewPassword");
+const backupsPreviewStatus = document.getElementById("backupsPreviewStatus");
+const backupsPreviewSummary = document.getElementById("backupsPreviewSummary");
+const backupsPreviewCounts = document.getElementById("backupsPreviewCounts");
+const backupsPreviewUpgrade = document.getElementById("backupsPreviewUpgrade");
+const backupsPreviewRun = document.getElementById("backupsPreviewRun");
+const backupsRestoreRun = document.getElementById("backupsRestoreRun");
+let previewToken = null; // single-use restore token; never displayed or logged
+let previewBackupId = null;
+let previewReturnButton = null;
+
+function formatSummaryDate(iso, withTime) {
+  const date = new Date(iso);
+  if (!iso || Number.isNaN(date.getTime())) return "unknown";
+  const day = date.toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
+  if (!withTime) return day;
+  return `${day}, ${date.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit", hour12: false })}`;
+}
+
+function describeBackupSummary(summary) {
+  if (!summary.entryCount) return "This backup has no entries.";
+  const count = `${summary.entryCount} ${summary.entryCount === 1 ? "entry" : "entries"}`;
+  return `${count}. Last changed ${formatSummaryDate(summary.newestUpdatedAt, true)}. Oldest entry from ${formatSummaryDate(summary.oldestCreatedAt, false)}.`;
+}
+
+function resetBackupPreview() {
+  previewBackupId = null;
+  previewReturnButton = null;
+  previewToken = null;
+  backupsRestoreRun.classList.add("hidden");
+  backupsPreviewPassword.value = "";
+  backupsPreviewStatus.textContent = "";
+  backupsPreviewCounts.textContent = "";
+  backupsPreviewUpgrade.textContent = "";
+  backupsPreviewUpgrade.hidden = true;
+  backupsPreviewSummary.hidden = true;
+  backupsPreviewTitle.textContent = "";
+  backupsPreview.classList.add("hidden");
+  backupsListView.classList.remove("hidden");
+}
+
+function openBackupPreview(item, button) {
+  resetBackupPreview();
+  previewBackupId = item.id;
+  previewReturnButton = button;
+  backupsPreviewTitle.textContent = `${formatBackupDate(item.createdAt)} · ${BACKUP_KINDS[item.kind] || "Backup"}`;
+  backupsListView.classList.add("hidden");
+  backupsPreview.classList.remove("hidden");
+  backupsPreviewPassword.focus();
+}
+
+function backBackupPreview() {
+  const returnTo = previewReturnButton;
+  resetBackupPreview();
+  if (returnTo && returnTo.isConnected) returnTo.focus();
+  else backupsCreate.focus();
+}
+
+async function runBackupPreview() {
+  const id = previewBackupId;
+  if (id === null) return;
+  previewToken = null;
+  backupsRestoreRun.classList.add("hidden");
+  backupsPreviewStatus.textContent = "";
+  backupsPreviewSummary.hidden = true;
+  const password = backupsPreviewPassword.value;
+  if (!password) {
+    backupsPreviewStatus.textContent = "Enter the backup's master password.";
+    backupsPreviewPassword.focus();
+    return;
+  }
+  await withDisabled(backupsPreviewRun, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.previewBackup(id, password);
+    } catch {
+      result = { success: false, error: "Could not preview this backup." };
+    }
+    if (!backupsDialog.open || previewBackupId !== id) return;
+    backupsPreviewPassword.value = "";
+    if (!result || !result.success) {
+      backupsPreviewStatus.textContent = (result && result.error) || "Could not preview this backup.";
+      backupsPreviewPassword.focus();
+      return;
+    }
+    const { summary } = result;
+    backupsPreviewCounts.textContent = describeBackupSummary(summary);
+    backupsPreviewUpgrade.hidden = !summary.willUpgrade;
+    backupsPreviewUpgrade.textContent = summary.willUpgrade
+      ? `Format version ${summary.version}: it will be upgraded the first time it is unlocked.`
+      : "";
+    backupsPreviewSummary.hidden = false;
+    previewToken = result.token || null;
+    backupsRestoreRun.classList.toggle("hidden", !previewToken);
+  });
+}
+
+let restoreInFlight = false;
+
+async function runBackupRestore() {
+  const id = previewBackupId;
+  const token = previewToken;
+  if (id === null || !token) return;
+  const backButton = document.getElementById("backupsPreviewBack");
+  const closeButton = document.getElementById("backupsClose");
+  restoreInFlight = true;
+  backButton.disabled = true;
+  closeButton.disabled = true;
+  await withDisabled(backupsRestoreRun, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.restoreBackup(id, token);
+    } catch {
+      result = { success: false, error: "Could not restore this backup." };
+    } finally {
+      restoreInFlight = false;
+      backButton.disabled = false;
+      closeButton.disabled = false;
+    }
+    previewToken = null; // used up after any attempt
+    // A successful restore has locked the vault in the main process, so the window must move to
+    // the locked state even if the dialog was closed or the view changed in the meantime.
+    if (result && result.success) {
+      let message = "Backup restored. Unlock with the master password that was in use when it was made.";
+      if (result.preRestoreBackup) message += " Your previous vault was saved as a pre-restore backup.";
+      if (!vaultPanel.classList.contains("hidden")) {
+        clearUnlockedView(message);
+      } else {
+        closeBackupsDialog();
+        unlockStatus.textContent = message;
+        initializeUnlockForm();
+        masterPasswordInput.focus();
+      }
+      return;
+    }
+    if (!backupsDialog.open || previewBackupId !== id) return;
+    backupsRestoreRun.classList.add("hidden");
+    if (result && result.cancelled) {
+      backupsPreviewStatus.textContent = "Restore cancelled. Preview the backup again to restore it.";
+    } else {
+      backupsPreviewStatus.textContent = (result && result.error) || "Could not restore this backup.";
+    }
+  });
+}
+backupsRestoreRun.addEventListener("click", runBackupRestore);
+// Escape can't close the dialog while a restore is running.
+backupsDialog.addEventListener("cancel", (event) => {
+  if (restoreInFlight || deleteInFlight) event.preventDefault();
+});
+
+backupsPreviewRun.addEventListener("click", runBackupPreview);
+document.getElementById("backupsPreviewBack").addEventListener("click", backBackupPreview);
+backupsPreviewPassword.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") return;
+  event.preventDefault();
+  if (!backupsPreviewRun.disabled) runBackupPreview();
+});
+
+function closeBackupsDialog() {
+  backupsSession += 1;
+  if (backupsDialog.open) backupsDialog.close();
+  clearBackupsList();
+  resetBackupPreview();
+}
+
+backupsDialog.addEventListener("close", () => {
+  backupsSession += 1;
+  deleteInFlight = false;
+  document.getElementById("backupsClose").disabled = false;
+  clearBackupsList();
+  resetBackupPreview();
+});
+document.getElementById("backupsClose").addEventListener("click", closeBackupsDialog);
+
+backupsMenuItem.addEventListener("click", () => {
+  closeMenus();
+  if (vaultPanel.classList.contains("hidden")) return;
+  backupsCanDelete = true;
+  resetBackupPreview();
+  backupsDialog.showModal();
+  backupsCreate.focus();
+  loadBackups();
+});
+
+document.getElementById("restoreBackupBtn").addEventListener("click", () => {
+  if (!vaultPanel.classList.contains("hidden")) return;
+  backupsCanDelete = false;
+  resetBackupPreview();
+  backupsDialog.showModal();
+  backupsCreate.focus();
+  loadBackups();
+});
+
+backupsCreate.addEventListener("click", () => withDisabled(backupsCreate, async () => {
+  setBackupsStatus("Creating backup...");
+  const result = await window.electronAPI.backupVault();
+  if (!backupsDialog.open) return;
+  if (!result.success) {
+    setBackupsStatus(result.error, true);
+    return;
+  }
+  await loadBackups();
+}));
 
 document.querySelectorAll(".menu-list [data-action]").forEach((item) => {
   item.addEventListener("click", async () => {

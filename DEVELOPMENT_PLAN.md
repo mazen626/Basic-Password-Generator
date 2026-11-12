@@ -55,7 +55,7 @@ This plan is based on the project technical report and the current Phase 0 resul
 
 ## Phase 2 — Vault management
 
-**Goal:** make VLAUTR a complete vault: users can recover their data safely, and the vault can hold more kinds of information without compromising compatibility. Backup and recovery comes first (2A); new record types build on it (2B).
+**Goal:** make VLAUTR a complete vault: users can recover their data safely, and the vault can hold more kinds of information without compromising compatibility. Backup and recovery comes first (2A); new record types build on it (2B); import and export work with other password managers and browsers (2C).
 
 ### 2A — Backup and recovery management
 
@@ -89,6 +89,24 @@ Candidate features: password history, secure notes, Wi-Fi credentials, software 
 - UI uses explicit field labels and confirmations for destructive changes and matches existing identity.
 
 **Dependency:** the 2A recovery workflow and approved schema design. Import/export should be a separate feature with plaintext-file warnings, explicit destination, cancellation cleanup, and no automatic upload.
+
+### 2C — Import and export compatibility
+
+**Goal:** import a CSV exported by any common browser or password manager, and export a CSV that those apps accept, without losing data or weakening the plaintext-file safeguards. Requested by the owner on 2026-11-12.
+
+**Today:** `csv-transfer.js` already imports by matching column names used by Chrome, Edge, Brave, Firefox, Bitwarden, 1Password, LastPass, KeePass, Dashlane and Apple Passwords, but only against hand-made sample headers. Export writes one generic layout (`name, url, username, password, note, category, favorite, backup_codes`) that has not been tested in any other app. The vault has no URL field, so entries without a domain-like site name or a `URL:` note line are exported with an empty URL, which browser importers reject.
+
+**Sequence:** collect real export samples (headers and quirks only, never real data) → import fixtures and fixes per source → export profiles → round-trip and target-import checks.
+
+**Acceptance criteria:**
+
+- Import fixtures built from the real export layouts of at least Chrome/Edge/Brave, Firefox, Safari/Apple Passwords, Bitwarden, 1Password, LastPass, Proton Pass, KeePass/KeePassXC and Dashlane import correctly, including quoting, separators, encodings (UTF-8 with or without BOM), line endings, and multi-line notes.
+- Export offers named profiles: a browser profile (Chrome, Edge, Brave, Firefox, Safari) and a password-manager profile (Bitwarden-style), plus the existing VLAUTR layout, which keeps every field for re-import. Each profile is documented with its exact columns.
+- Entries that a target can't accept (for example no usable URL for a browser) are listed before export instead of being written silently, and the user chooses to skip them or export anyway.
+- Each profile is checked by importing a throwaway file into the real target app, and the result is recorded in the docs. A VLAUTR → CSV → VLAUTR round trip loses nothing except used backup codes.
+- The existing safeguards stay: the plaintext warning, an explicit destination, the cloud-folder warning, a pre-import encrypted backup, and no upload.
+
+**Dependency:** 2A (the pre-import backup becomes a labeled, restorable backup). It can run before or after 2B; if 2B adds a URL field, 2C should use it instead of the `URL:` note line. The export profiles change what plaintext leaves the vault, so they need `senior-engineer` review.
 
 ## Phase 3 — Password intelligence: local password health and generator improvements
 
@@ -161,6 +179,7 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 
 - Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
 - Phase 1: **Complete** (merged into `main` 2026-11-10 in PR #11, version 1.3.1); see `docs/PHASE-1-DESIGN.md`. Milestones 1.1 to 1.4 are implemented, the acceptance criteria were checked against the code and `docs/SECURITY.md`, and `npm test` passes (143 tests). Carried forward, as listed in `docs/SECURITY.md`: the master password still crosses IPC as a string, revealed values stay in renderer memory until garbage collected, Windows can't flush the vault folder after the rename, and backups are never pruned and keep opening with the password in use when they were made (Phase 2A).
-- Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
+- Phase 2: **2A implemented on the `m72b` branch** (milestones 2A.1 to 2A.4, version 1.7.0); not yet merged into `main`. Progress is recorded in `docs/PHASE-2-REPORT.md`. 2B and 2C are planned.
+- Phases 3–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.
