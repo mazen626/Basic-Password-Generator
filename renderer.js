@@ -914,6 +914,13 @@ const backupsList = document.getElementById("backupsList");
 const backupsStatus = document.getElementById("backupsStatus");
 const backupsNote = document.getElementById("backupsNote");
 const backupsCreate = document.getElementById("backupsCreate");
+const backupsDelete = document.getElementById("backupsDelete");
+const backupsSelectAll = document.getElementById("backupsSelectAll");
+let backupsCanDelete = false; // true only when the dialog was opened while the vault is unlocked
+let backupsSession = 0; // bumps on every close so late responses can be ignored
+let deleteInFlight = false;
+const backupsSelection = new Set();
+const backupsKnown = new Map(); // id -> list item, for dates in the "kept" message
 
 const BACKUP_KINDS = {
   backup: "Backup",
@@ -951,8 +958,26 @@ function setBackupsStatus(text, isError = false) {
   backupsStatus.classList.toggle("error", isError);
 }
 
+function backupCheckboxes() {
+  return Array.from(backupsList.querySelectorAll(".backups-pick input"));
+}
+
+function updateBackupsSelectionUi() {
+  const boxes = backupCheckboxes();
+  backupsDelete.classList.toggle("hidden", !backupsCanDelete);
+  backupsSelectAll.classList.toggle("hidden", !backupsCanDelete || !boxes.length);
+  const count = backupsSelection.size;
+  backupsDelete.textContent = count ? `Delete selected (${count})…` : "Delete selected…";
+  if (!deleteInFlight) backupsDelete.disabled = count === 0;
+  backupsSelectAll.textContent = boxes.length && count === boxes.length ? "Clear selection" : "Select all";
+  backupsSelectAll.disabled = deleteInFlight;
+}
+
 function clearBackupsList() {
+  backupsSelection.clear();
+  backupsKnown.clear();
   backupsList.replaceChildren();
+  updateBackupsSelectionUi();
   backupsNote.hidden = true;
   setBackupsStatus("");
 }
@@ -968,7 +993,27 @@ function renderBackupItem(item) {
     li.append(node);
     return node;
   };
-  add("backups-date", formatBackupDate(item.createdAt));
+  if (backupsCanDelete) {
+    const pick = document.createElement("label");
+    pick.className = "backups-date backups-pick";
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    box.checked = backupsSelection.has(item.id);
+    box.disabled = deleteInFlight;
+    box.dataset.id = String(item.id);
+    box.setAttribute("aria-label", `Select backup from ${formatBackupDate(item.createdAt)}, ${BACKUP_KINDS[item.kind] || "Backup"}`);
+    box.addEventListener("change", () => {
+      if (box.checked) backupsSelection.add(item.id);
+      else backupsSelection.delete(item.id);
+      updateBackupsSelectionUi();
+    });
+    const text = document.createElement("span");
+    text.textContent = formatBackupDate(item.createdAt);
+    pick.append(box, text);
+    li.append(pick);
+  } else {
+    add("backups-date", formatBackupDate(item.createdAt));
+  }
   add("backups-size", formatBackupSize(item.size));
   add("backups-meta", BACKUP_KINDS[item.kind] || "Backup");
   const [icon, label] = BACKUP_STATUSES[item.status] || ["?", "Unknown"];
@@ -1003,9 +1048,73 @@ async function loadBackups() {
     return;
   }
   setBackupsStatus("");
+  for (const item of result.items) backupsKnown.set(item.id, item);
   backupsList.replaceChildren(...result.items.map(renderBackupItem));
   backupsNote.hidden = !result.truncated;
+  updateBackupsSelectionUi();
 }
+
+function describeKept(kept) {
+  const parts = kept.map((entry) => {
+    const item = backupsKnown.get(entry.id);
+    const label = item ? formatSummaryDate(item.createdAt, true) : String(entry.id);
+    return `${label} — ${entry.reason}`;
+  });
+  return `Kept ${kept.length}: ${parts.join("; ")}`;
+}
+
+function setDeleteBusy(busy) {
+  deleteInFlight = busy;
+  document.getElementById("backupsClose").disabled = busy;
+  backupCheckboxes().forEach((box) => { box.disabled = busy; });
+  updateBackupsSelectionUi();
+}
+
+async function runBackupDelete() {
+  if (!backupsCanDelete || deleteInFlight || !backupsSelection.size) return;
+  const ids = Array.from(backupsSelection);
+  const session = backupsSession;
+  setDeleteBusy(true);
+  await withDisabled(backupsDelete, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.deleteBackups(ids);
+    } catch {
+      result = { success: false, error: "Could not delete the selected backups." };
+    }
+    // A reply that arrives after the dialog was closed belongs to an earlier session: closing
+    // already reset the busy state, and a newer delete may be running now.
+    if (!backupsDialog.open || session !== backupsSession) return;
+    setDeleteBusy(false);
+    if (result && result.cancelled) {
+      setBackupsStatus("Nothing was deleted.");
+    } else if (!result || !result.success) {
+      setBackupsStatus((result && result.error) || "Could not delete the selected backups.", true);
+    } else {
+      const deleted = Array.isArray(result.deleted) ? result.deleted.length : 0;
+      const kept = Array.isArray(result.kept) ? result.kept : [];
+      // Resolve dates before the reload replaces the known list.
+      const keptText = kept.length ? describeKept(kept) : "";
+      await loadBackups();
+      if (!backupsDialog.open || session !== backupsSession) return;
+      const text = `Deleted ${deleted} ${deleted === 1 ? "backup" : "backups"}.`;
+      setBackupsStatus(keptText ? `${text} ${keptText}` : text);
+    }
+  });
+  updateBackupsSelectionUi();
+}
+backupsDelete.addEventListener("click", runBackupDelete);
+backupsSelectAll.addEventListener("click", () => {
+  if (deleteInFlight) return;
+  const boxes = backupCheckboxes();
+  const selectAll = backupsSelection.size !== boxes.length;
+  backupsSelection.clear();
+  for (const box of boxes) {
+    box.checked = selectAll;
+    if (selectAll) backupsSelection.add(box.dataset.id);
+  }
+  updateBackupsSelectionUi();
+});
 
 // Restore preview step: shows what a backup holds without changing anything.
 const backupsListView = document.getElementById("backupsListView");
@@ -1158,7 +1267,7 @@ async function runBackupRestore() {
 backupsRestoreRun.addEventListener("click", runBackupRestore);
 // Escape can't close the dialog while a restore is running.
 backupsDialog.addEventListener("cancel", (event) => {
-  if (restoreInFlight) event.preventDefault();
+  if (restoreInFlight || deleteInFlight) event.preventDefault();
 });
 
 backupsPreviewRun.addEventListener("click", runBackupPreview);
@@ -1170,12 +1279,16 @@ backupsPreviewPassword.addEventListener("keydown", (event) => {
 });
 
 function closeBackupsDialog() {
+  backupsSession += 1;
   if (backupsDialog.open) backupsDialog.close();
   clearBackupsList();
   resetBackupPreview();
 }
 
 backupsDialog.addEventListener("close", () => {
+  backupsSession += 1;
+  deleteInFlight = false;
+  document.getElementById("backupsClose").disabled = false;
   clearBackupsList();
   resetBackupPreview();
 });
@@ -1184,6 +1297,7 @@ document.getElementById("backupsClose").addEventListener("click", closeBackupsDi
 backupsMenuItem.addEventListener("click", () => {
   closeMenus();
   if (vaultPanel.classList.contains("hidden")) return;
+  backupsCanDelete = true;
   resetBackupPreview();
   backupsDialog.showModal();
   backupsCreate.focus();
@@ -1192,6 +1306,7 @@ backupsMenuItem.addEventListener("click", () => {
 
 document.getElementById("restoreBackupBtn").addEventListener("click", () => {
   if (!vaultPanel.classList.contains("hidden")) return;
+  backupsCanDelete = false;
   resetBackupPreview();
   backupsDialog.showModal();
   backupsCreate.focus();

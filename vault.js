@@ -171,6 +171,49 @@ class PasswordVault {
     return { summary: summarizeBackup(entries, envelope.version), digest };
   }
 
+  // Manual backup cleanup (docs/PHASE-2A-DESIGN.md, part E). Needs the vault unlocked. Runs as one
+  // write transaction with its own fresh, uncapped scan, so the guards never come from the window.
+  //
+  // Guard rule, computed on that scan. These backups are never deleted, even if requested:
+  //   1. the newest valid backup (reported "only valid backup" when it is the sole valid one, else
+  //      "newest valid backup"), so a valid backup always remains if any exists;
+  //   2. the newest valid backup whose password hint is `current`;
+  //   3. the newest valid pre-restore backup, or, when no pre-restore backup is valid, the newest
+  //      pre-restore file of any status.
+  // Because these stay on disk whatever is requested, the set that remains always holds them.
+  // Invalid, too-large and unreadable files are otherwise deletable. A requested id that is no
+  // longer in the scan is reported as kept ("no longer exists"). Each file is deleted with a plain
+  // unlink after an lstat shows a regular file; one failure doesn't stop the rest. Messages and
+  // results never include a path.
+  async deleteBackups(ids) {
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 1000 || new Set(ids).size !== ids.length) {
+      throw new Error('Choose between 1 and 1000 different backups to delete.');
+    }
+    ids.forEach((id) => this.validateBackupId(id));
+    const directory = path.dirname(this.filePath);
+
+    return this.runWriteTransaction(async () => {
+      this.requireKey();
+      const scan = await this.listBackups();
+      const protectedIds = computeProtectedBackups(scan);
+      const present = new Set(scan.map((item) => item.id));
+      const deleted = [];
+      const kept = [];
+      for (const id of ids) {
+        if (!present.has(id)) {
+          kept.push({ id, reason: 'no longer exists' });
+        } else if (protectedIds.has(id)) {
+          kept.push({ id, reason: protectedIds.get(id) });
+        } else if (await unlinkRegularFile(path.join(directory, id))) {
+          deleted.push(id);
+        } else {
+          kept.push({ id, reason: 'could not be deleted' });
+        }
+      }
+      return { deleted, kept };
+    });
+  }
+
   // SHA-256 (hex) of the current vault file's bytes, read once, or 'absent' when there is none.
   // Streamed, so a vault of any size can be compared later without holding it in memory.
   async getVaultState() {
@@ -640,6 +683,33 @@ async function writeBackup(filePath, contents, kind = 'backup') {
   const backupName = `${BACKUP_PREFIXES[kind]}-${Date.now()}-${crypto.randomUUID()}.bak`;
   await writeAndFlush(path.join(path.dirname(filePath), backupName), contents, 'wx');
   return backupName;
+}
+
+// Maps each protected backup id to its reason (see PasswordVault.deleteBackups). `scan` is the
+// output of listBackups: valid first, then newest first.
+function computeProtectedBackups(scan) {
+  const protectedIds = new Map();
+  const protect = (item, reason) => {
+    if (item && !protectedIds.has(item.id)) protectedIds.set(item.id, reason);
+  };
+  const valid = scan.filter((item) => item.status === 'valid');
+  protect(valid[0], valid.length === 1 ? 'only valid backup' : 'newest valid backup');
+  protect(valid.find((item) => item.passwordHint === 'current'), 'newest backup that opens with the current password');
+  protect(scan.find((item) => item.kind === 'pre-restore'), 'newest pre-restore backup');
+  return protectedIds;
+}
+
+// Deletes one file only if it is a regular file (never a folder, symlink or junction). Returns
+// true when it was deleted.
+async function unlinkRegularFile(filePath) {
+  try {
+    const stats = await fs.lstat(filePath);
+    if (!stats.isFile()) return false;
+    await fs.unlink(filePath);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function escapeRegExp(text) {

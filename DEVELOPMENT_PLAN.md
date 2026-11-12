@@ -179,6 +179,7 @@ The reusable prompt should explicitly say whether the task is analysis-only, pla
 
 - Phase 0: **Complete** (report accepted 2026-11-08); see `docs/PHASE-0-REPORT.md` and `docs/PHASE-0-BASELINE.md`.
 - Phase 1: **Complete** (merged into `main` 2026-11-10 in PR #11, version 1.3.1); see `docs/PHASE-1-DESIGN.md`. Milestones 1.1 to 1.4 are implemented, the acceptance criteria were checked against the code and `docs/SECURITY.md`, and `npm test` passes (143 tests). Carried forward, as listed in `docs/SECURITY.md`: the master password still crosses IPC as a string, revealed values stay in renderer memory until garbage collected, Windows can't flush the vault folder after the rename, and backups are never pruned and keep opening with the password in use when they were made (Phase 2A).
-- Phases 2–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
+- Phase 2: **2A implemented on the `m72b` branch** (milestones 2A.1 to 2A.4, version 1.7.0); not yet merged into `main`. Progress is recorded in `docs/PHASE-2-REPORT.md`. 2B and 2C are planned.
+- Phases 3–6: **Planned**, not authorized as implementation work until reached through the prompt workflow.
 
 Update this section only when a phase's acceptance criteria are reviewed against evidence. Record deferred criteria and risks instead of marking a phase complete by assumption.

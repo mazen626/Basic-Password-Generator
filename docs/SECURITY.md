@@ -128,7 +128,12 @@ Backups are byte-for-byte copies of `vault.json`, written next to it with `wx` a
 
 Any failure before the rename leaves `vault.json` and the lock state unchanged. Same limit as every save: Windows can't flush the folder, so a power cut right after the rename can lose the rename, leaving the previous vault in place.
 
-Cleanup (2A.4) is designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
+**Cleanup (2A.4).** Backups are never deleted automatically. In File > Backups…, opened while unlocked, the user selects backups and chooses "Delete selected…"; `vault:delete-backups(ids)` needs the vault unlocked:
+- The ids are checked (1 to 1000, unique, each a valid backup name) and compared with a fresh, uncapped scan of the folder. If any is missing, nothing is deleted.
+- A native confirmation built from that scan says "Permanently delete N backups from <date> to <date>? This can't be undone." Cancel is the default. If the vault locks or any cancel event happens while it is open, nothing is deleted.
+- Inside the vault's write transaction, a second fresh scan decides which backups are protected. These are never deleted, even when selected: the newest valid backup (so a valid backup always remains), the newest valid backup that opens with the current master password, and the newest valid pre-restore backup (or the newest pre-restore file if none is valid). They are reported back with the reason.
+- Each other file is deleted with a plain `unlink`, only if it is still a regular file in the vault folder. There is no Recycle Bin and no secure wipe: copies may survive in File History, shadow copies, cloud sync or on SSD blocks, still encrypted with the password they were made with.
+- "Valid" means the file's structure is correct. The app can't confirm a backup decrypts without its password, so the guards protect structurally valid files, not ones known to open.
 
 ## Known gaps (planned for Phase 1)
 
@@ -136,7 +141,7 @@ Cleanup (2A.4) is designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not y
 2. **Copy takes plaintext (fixed in Phase 1 milestone 1.2).** Copying a saved entry sends only its ID with a token tied to that entry. The generator's Copy button still sends text, because the window created that password.
 3. **Master password in IPC.** The master password crosses IPC as a JavaScript string, which can't be zeroed. Only the derived key buffer is zeroed.
 4. **Write durability (fixed in Phase 1 milestone 1.3).** Each save writes `vault.json.tmp`, flushes it to disk (`FileHandle.sync()`, which is `FlushFileBuffers` on Windows), and only then renames it over `vault.json`. A power cut can no longer leave a renamed but unwritten vault. Backup files are flushed to disk the same way. Remaining limit: Windows cannot flush a folder, so a power cut right after the rename can lose the rename, leaving the previous vault in place.
-5. **Backups are never pruned** and stay readable with the master password that was in use when they were created. They can now be listed and restored (2A.1 to 2A.3); manual cleanup comes in milestone 2A.4.
+5. **Backups are never pruned** and stay readable with the master password that was in use when they were created. Since Phase 2A they can be listed, restored and deleted by hand; old backups made under a leaked password should be deleted once a newer backup exists.
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
 7. **Permissions (fixed in Phase 1 milestone 1.1).** `denyAllPermissions` in `ipc-handlers.js` now denies every Electron permission request and check, such as camera, microphone and notifications. The app needs none of them.
 8. **Master-password change (fixed in Phase 1 milestone 1.4).** File > Change master password checks the current password, saves a byte-for-byte backup, then re-encrypts the vault with a fresh salt and 600,000 iterations, which also upgrades vaults created with fewer. A failure before the rename leaves the old vault and key in use. Backups made before the change still open only with the old password.

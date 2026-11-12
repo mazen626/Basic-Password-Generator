@@ -160,7 +160,10 @@
   .backups-state { text-align: right; color: var(--label); }
   .backups-state.bad { color: #ff9ead; }
   .backups-id { grid-column: 1 / -1; color: var(--muted); font: 11px/1.4 var(--font-mono); overflow-wrap: anywhere; }
-  .backups-actions { gap: 8px; }
+  .backups-actions { gap: 8px; flex-wrap: wrap; }
+  .backups-pick { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+  .backups-pick input { flex: none; width: 16px; height: 16px; margin: 0; accent-color: #8b5cf6; }
+  .backups-pick input:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
   .backups-preview { display: grid; gap: 10px; }
   .backups-preview-title { margin: 0; font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
   .backups-preview-status { min-height: 16px; margin: 0; color: #ff9ead; font-size: 12px; }
@@ -417,6 +420,8 @@
     <ul id="backupsList" class="backups-list"></ul>
     <div class="csv-report-actions backups-actions">
       <button type="button" id="backupsCreate" class="primary-button">Create backup now</button>
+      <button type="button" id="backupsSelectAll" class="hidden">Select all</button>
+      <button type="button" id="backupsDelete" class="hidden" disabled>Delete selected&hellip;</button>
       <button type="button" id="backupsClose">Close</button>
     </div>
   </div>

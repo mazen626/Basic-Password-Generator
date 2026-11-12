@@ -4,6 +4,32 @@ A short report is added here after each Phase 2 milestone: what changed, what is
 
 Plan: [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) (Phase 2: 2A backups and restore, 2B record types, 2C import and export). Design: [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md).
 
+## 2A.4: Backup cleanup (version 1.7.0, 2026-11-12)
+
+This completes **2A, backup and recovery**: backups can now be listed, previewed, restored and cleaned up from inside VLAUTR.
+
+**What changed**
+- In **File > Backups…** (opened while the vault is unlocked), each backup has a checkbox, with **Select all** and **Delete selected (N)…** buttons. Opened from the unlock screen, the window has no delete controls.
+- After deleting, the window says how many backups were deleted and lists any that were kept, with the reason.
+- `docs/SECURITY.md`, the README, the design doc and `DEVELOPMENT_PLAN.md` are updated.
+
+**What is implemented**
+- Backups are never deleted automatically. Deleting needs the vault unlocked and a confirmation from the app itself: "Permanently delete N backups from … to …? This can't be undone."
+- These backups are always kept, even when selected: the newest good backup, the newest one that opens with your current master password, and the newest pre-restore backup. So at least one good backup always remains.
+- The app decides what is protected from its own fresh look at the folder, never from the window's list. Only regular files in the vault folder with exact backup names can be deleted; the vault file itself, folders and links never can.
+- If the vault locks while the confirmation is open, nothing is deleted.
+
+**Checks**
+- `npm test`: 246 tests, 244 pass, 0 fail, 2 skipped. Both skipped tests need file symlinks, which this Windows account isn't allowed to create.
+- An independent review found no way to delete an unselected or protected file. It asked for two stronger tests (a cancel event during the confirmation, and a protected backup far down a very long list); both were added and shown to fail if their safeguard is removed. A window fix stops an old reply from re-enabling buttons during a newer delete.
+- Not yet checked by hand in the running app.
+
+**Still open**
+- Deleted backups may survive in Windows File History, shadow copies or cloud sync, still encrypted.
+- "Good" means the file's structure is correct; the app can't tell whether you still know its password.
+
+**Next:** Phase 2A is done. Next is 2B (new record types, starting with a schema design) or 2C (import and export that work with browsers and other password managers), as you choose.
+
 ## 2A.3: Restore (version 1.6.0, 2026-11-12)
 
 **What changed**

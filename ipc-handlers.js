@@ -286,6 +286,53 @@ function createIpcHandlers({
     };
   }
 
+  // Manual backup cleanup (docs/PHASE-2A-DESIGN.md, part E). Order:
+  //   1. unlocked, and 1 to 1000 unique valid ids;
+  //   2. fresh uncapped scan; any id missing from it refuses the whole request;
+  //   3. native confirmation (Cancel is the default), built from that scan;
+  //   4. after it, stop if the vault locked meanwhile;
+  //   5. vault.deleteBackups takes a new scan inside the write transaction and applies the guards.
+  async function deleteBackups(ids) {
+    requireUnlocked();
+    const vault = getVault();
+    if (!Array.isArray(ids) || ids.length < 1 || ids.length > 1000 || new Set(ids).size !== ids.length) {
+      throw new Error('Choose between 1 and 1000 different backups to delete.');
+    }
+    ids.forEach((id) => vault.validateBackupId(id));
+
+    const cancelCount = restoreCancelCount;
+    const scan = new Map((await vault.listBackups()).map((item) => [item.id, item]));
+    if (ids.some((id) => !scan.has(id))) throw new Error('Some of these backups no longer exist. Refresh the list.');
+
+    const times = ids.map((id) => Date.parse(scan.get(id).createdAt));
+    const oldest = formatBackupDate(Math.min(...times));
+    const newest = formatBackupDate(Math.max(...times));
+    const message = ids.length === 1
+      ? `Permanently delete 1 backup from ${oldest}? This can't be undone.`
+      : `Permanently delete ${ids.length} backups from ${oldest} to ${newest}? This can't be undone.`;
+    const confirmation = await dialog.showMessageBox(getFocusedWindow() ?? getAllWindows()[0] ?? null, {
+      type: 'warning',
+      buttons: ['Delete', 'Cancel'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Delete backups',
+      message,
+      detail: 'Some backups are kept to protect your recovery options, such as the newest valid backup.'
+    });
+    if (confirmation.response !== 0) {
+      armIdleLock();
+      return { success: false, cancelled: true };
+    }
+    // The idle lock may have fired while the dialog was open.
+    requireUnlocked();
+    if (restoreCancelCount !== cancelCount) throw new Error('The vault was locked. Nothing was deleted.');
+
+    const { deleted, kept } = await vault.deleteBackups(ids);
+    armIdleLock();
+    return { success: true, deleted, kept };
+  }
+
   function requireUnlocked() {
     if (!isUnlocked()) throw new Error('Unlock the vault first.');
   }
@@ -417,6 +464,9 @@ function createIpcHandlers({
     // Replaces vault.json with a previewed backup, after a native confirmation (part D). Works
     // locked or unlocked; the vault is always locked afterwards.
     registerVaultHandler('vault:restore-backup', (id, token) => restoreBackup(id, token));
+
+    // Permanently deletes chosen backups after a native confirmation (part E). Needs the vault unlocked.
+    registerVaultHandler('vault:delete-backups', (ids) => deleteBackups(ids));
 
     registerVaultHandler('vault:open-folder', async () => {
       const error = await shell.openPath(path.dirname(getVault().filePath));

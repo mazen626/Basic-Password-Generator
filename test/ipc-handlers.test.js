@@ -895,7 +895,7 @@ test('vault:restore-backup checks its arguments and returns errors without paths
   for (const [args, error] of [
     [[], 'Invalid backup id.'],
     [[42, 'token'], 'Invalid backup id.'],
-    [['..\vault.json', 'token'], 'Invalid backup id.'],
+    [['..\\vault.json', 'token'], 'Invalid backup id.'],
     [[id], TOKEN_ERROR],
     [[id, 42], TOKEN_ERROR],
     [[id, ['token']], TOKEN_ERROR]
@@ -908,4 +908,152 @@ test('vault:restore-backup checks its arguments and returns errors without paths
   }
   assert.equal(h.dialogs.length, 0);
   assert.deepEqual(await folderBytes(directory), before);
+});
+
+// --- Phase 2A milestone 2A.4: delete backups (the guard cases are in vault-backup-delete.test.js) ---
+
+const DELETE_MS = 1762900000000;
+const deleteName = (n) => `vault-backup-${DELETE_MS + n * 86400000}-0f8e2b7c-1a2b-4c3d-8e9f-${String(n).padStart(12, '0')}.bak`;
+
+// An unlocked vault with a valid newest backup and `junk` invalid ones (the deletable kind).
+async function deleteFixture(t, junk = 3) {
+  const fixture = await createVault(t);
+  const keep = deleteName(50);
+  fs.copyFileSync(fixture.vaultPath, path.join(fixture.directory, keep));
+  const ids = [];
+  for (let n = 1; n <= junk; n += 1) {
+    ids.push(deleteName(n));
+    fs.writeFileSync(path.join(fixture.directory, deleteName(n)), 'not a vault');
+  }
+  return { ...fixture, keep, ids };
+}
+
+const present = (fixture, id) => fs.existsSync(path.join(fixture.directory, id));
+
+test('vault:delete-backups confirms with the count and dates from the scan, then deletes', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result, { success: true, deleted: f.ids, kept: [] });
+  assert.equal(h.dialogs.length, 1);
+  const [dialog] = h.dialogs;
+  assert.equal(dialog.message, `Permanently delete 3 backups from ${formatLocal(DELETE_MS + 86400000)} to ${formatLocal(DELETE_MS + 3 * 86400000)}? This can't be undone.`);
+  assert.deepEqual([dialog.buttons, dialog.defaultId, dialog.cancelId], [['Delete', 'Cancel'], 1, 1]);
+  f.ids.forEach((id) => assert.equal(present(f, id), false));
+  assert.equal(present(f, f.keep), true);
+});
+
+function formatLocal(ms) {
+  const d = new Date(ms);
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const pad = (v) => String(v).padStart(2, '0');
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+test('vault:delete-backups uses singular wording for one backup and only the requested dates', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  await h.invoke('vault:delete-backups', [f.ids[1]]);
+  assert.equal(h.dialogs[0].message, `Permanently delete 1 backup from ${formatLocal(DELETE_MS + 2 * 86400000)}? This can't be undone.`);
+});
+
+test('cancelling vault:delete-backups deletes nothing', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault, { answers: [1] });
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, cancelled: true });
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups reports guarded backups as kept, with reasons', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const result = await h.invoke('vault:delete-backups', [f.keep, f.ids[0]]);
+  assert.deepEqual(result, {
+    success: true,
+    deleted: [f.ids[0]],
+    kept: [{ id: f.keep, reason: 'only valid backup' }]
+  });
+});
+
+test('vault:delete-backups refuses the whole request when an id is not in the fresh scan', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const missing = deleteName(40);
+  const result = await h.invoke('vault:delete-backups', [f.ids[0], missing]);
+  assert.deepEqual(result, { success: false, error: 'Some of these backups no longer exist. Refresh the list.' });
+  assert.equal(h.dialogs.length, 0);
+  assert.equal(present(f, f.ids[0]), true);
+
+  // A folder named like a backup is not in the scan either.
+  fs.mkdirSync(path.join(f.directory, missing));
+  assert.equal((await h.invoke('vault:delete-backups', [missing])).success, false);
+  assert.equal(present(f, missing), true);
+});
+
+test('a backup removed between the dialog and the transaction is reported as kept', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    fs.rmSync(path.join(f.directory, f.ids[0]));
+    return Array.prototype.push.call(this, options);
+  };
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result.kept, [{ id: f.ids[0], reason: 'no longer exists' }]);
+  assert.deepEqual(result.deleted, f.ids.slice(1));
+});
+
+test('vault:delete-backups aborts when the vault locks while the dialog is open', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    f.vault.lock();
+    return Array.prototype.push.call(this, options);
+  };
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, error: 'Unlock the vault first.' });
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups is refused while locked, without a dialog', async (t) => {
+  const f = await deleteFixture(t);
+  f.vault.lock();
+  const h = harness(t, f.vault);
+  assert.deepEqual(await h.invoke('vault:delete-backups', f.ids), { success: false, error: 'Unlock the vault first.' });
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups checks its arguments before any dialog', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const bad = [undefined, 'x', {}, [], [f.ids[0], f.ids[0]], [1], ['vault.json'], ['..\\vault.json'],
+    Array.from({ length: 1001 }, (_, i) => deleteName(i))];
+  for (const ids of bad) {
+    const result = await h.invoke('vault:delete-backups', ids);
+    assert.equal(result.success, false);
+    assert.equal(JSON.stringify(result).includes(f.directory), false);
+  }
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups rejects callers that are not the app page', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  const event = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  assert.deepEqual(await h.invokeAs(event, 'vault:delete-backups', f.ids), { success: false, error: 'Unauthorized caller.' });
+  assert.equal(h.dialogs.length, 0);
+  f.ids.forEach((id) => assert.equal(present(f, id), true));
+});
+
+test('vault:delete-backups aborts when a cancel event happens while the dialog is open, even if still unlocked', async (t) => {
+  const f = await deleteFixture(t);
+  const h = harness(t, f.vault);
+  h.dialogs.push = function push(options) {
+    h.ipc.restoreTokens.cancel();
+    return Array.prototype.push.call(this, options);
+  };
+  const result = await h.invoke('vault:delete-backups', f.ids);
+  assert.deepEqual(result, { success: false, error: 'The vault was locked. Nothing was deleted.' });
+  assert.equal(f.vault.isUnlocked(), true);
+  [...f.ids, f.keep].forEach((id) => assert.equal(present(f, id), true));
 });

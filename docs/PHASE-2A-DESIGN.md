@@ -152,6 +152,7 @@ Manual only (decision 1): the user selects backups and deletes them.
   - the newest **valid** backup, so at least one valid backup always remains;
   - the newest backup whose hint is **current**, if there is one;
   - the most recent pre-restore backup.
+- **As implemented (2A.4):** the request is refused as a whole only if an `id` is missing from the scan taken before the confirmation. An `id` that disappears between the confirmation and the deletion is reported as kept ("no longer exists"), and nothing else is affected. The pre-restore guard keeps the newest *valid* pre-restore backup, falling back to the newest pre-restore file of any status only when none is valid, which is stricter than "most recent".
 - Protected files are skipped and reported back (`kept: [{ id, reason }]`). Invalid, too-large and unreadable files can be deleted.
 - Deletion is a permanent `fs.unlink` of an encrypted file: no Recycle Bin, no secure wipe. Copies may survive in File History, shadow copies, OneDrive or on SSD blocks, still encrypted with the password they were made with.
 - "Valid" means the envelope is correct. The app can't confirm that a backup decrypts without its password, so the guards protect the newest structurally valid file, not one known to open.

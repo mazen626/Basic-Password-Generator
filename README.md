@@ -122,7 +122,7 @@ The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the inst
 - `vault-before-restore-<timestamp>-<id>.bak`: your vault as it was just before a restore.
 - `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
-Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Restore…** opens one with its password, shows how many entries it holds, and can then restore it after a confirmation. Your current vault is always saved first as a `vault-before-restore-*` backup, and the vault locks afterwards: unlock it with the master password that was in use when the backup was made. If the vault won't open, **Restore from backup…** on the unlock screen does the same.
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Restore…** opens one with its password, shows how many entries it holds, and can then restore it after a confirmation. Your current vault is always saved first as a `vault-before-restore-*` backup, and the vault locks afterwards: unlock it with the master password that was in use when the backup was made. If the vault won't open, **Restore from backup…** on the unlock screen does the same. To clean up, tick backups and choose **Delete selected…**: they are deleted permanently after a confirmation, and the newest good backup, the newest one that opens with your current password, and the newest pre-restore backup are always kept.
 
 ## Project structure
 
