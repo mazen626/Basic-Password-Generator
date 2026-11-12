@@ -119,9 +119,10 @@ The vault is stored at `%APPDATA%\my-projects\vault.json`. `npm start`, the inst
 - `vault-backup-<timestamp>-<id>.bak`: backups you create with "Create encrypted backup" or "Create backup now".
 - `vault-before-password-change-<timestamp>-<id>.bak`: made automatically before the master password is changed.
 - `vault-before-import-<timestamp>-<id>.bak`: made automatically before a CSV import.
+- `vault-before-restore-<timestamp>-<id>.bak`: your vault as it was just before a restore.
 - `vault.json.v<version>-<timestamp>-<id>.bak`: automatic backups taken before a format upgrade.
 
-Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Preview…** opens one with its password to show how many entries it holds, without changing anything. There is no in-app restore yet. To restore, close VLAUTR and copy a backup over `vault.json`.
+Backups are exact copies of the encrypted vault and open with the master password that was in use when they were made. **File > Backups…** lists them with their date, kind, size and whether they look intact, and **Restore…** opens one with its password, shows how many entries it holds, and can then restore it after a confirmation. Your current vault is always saved first as a `vault-before-restore-*` backup, and the vault locks afterwards: unlock it with the master password that was in use when the backup was made. If the vault won't open, **Restore from backup…** on the unlock screen does the same.
 
 ## Project structure
 

@@ -274,11 +274,12 @@
         </div>
         <button id="unlockButton" type="submit">Unlock vault</button>
       </form>
-      <div id="recoveryActions" class="hidden">
+      <div id="recoveryActions">
         <p id="recoveryNotice" role="status"></p>
         <div class="buttons">
-          <button id="backupVaultBtn" type="button">Create encrypted backup</button>
-          <button id="openVaultFolderBtn" type="button">Open vault folder</button>
+          <button id="backupVaultBtn" class="hidden" type="button">Create encrypted backup</button>
+          <button id="openVaultFolderBtn" class="hidden" type="button">Open vault folder</button>
+          <button id="restoreBackupBtn" type="button">Restore from backup&hellip;</button>
         </div>
       </div>
       <p id="unlockStatus" role="status" aria-live="polite"></p>
@@ -430,7 +431,9 @@
     <div id="backupsPreviewSummary" class="backups-preview-summary" hidden>
       <p id="backupsPreviewCounts"></p>
       <p id="backupsPreviewUpgrade" hidden></p>
-      <p class="backups-note">Restoring a backup comes in the next update.</p>
+      <div class="csv-report-actions backups-actions">
+        <button type="button" id="backupsRestoreRun" class="primary-button hidden">Restore this backup</button>
+      </div>
     </div>
     <div class="csv-report-actions backups-actions">
       <button type="button" id="backupsPreviewBack">Back</button>

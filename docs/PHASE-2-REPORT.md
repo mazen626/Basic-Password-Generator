@@ -4,6 +4,31 @@ A short report is added here after each Phase 2 milestone: what changed, what is
 
 Plan: [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) (Phase 2: 2A backups and restore, 2B record types, 2C import and export). Design: [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md).
 
+## 2A.3: Restore (version 1.6.0, 2026-11-12)
+
+**What changed**
+- In **File > Backups…**, the row button is now **Restore…**. After the backup's password is checked and its summary shown, **Restore this backup** replaces the current vault with it, after a confirmation.
+- The unlock screen has a **Restore from backup…** button, so a vault that won't open can be recovered from inside the app.
+- `docs/SECURITY.md` explains each step of a restore, and the README describes how to restore and the new `vault-before-restore-*` backups.
+
+**What is implemented**
+- Before anything changes, the current vault is saved as a pre-restore backup, flushed to disk and read back to check it. If that fails, nothing is restored.
+- Only the exact backup that was previewed can be restored. If the backup or the current vault changed since the preview, or the vault locked or unlocked while the confirmation was open, the restore stops and asks for a new preview.
+- The confirmation comes from the app itself, not the window, and shows the backup's real date, kind and entry count.
+- The backup replaces the vault through the same safe save as every other write. Then the vault locks; it opens with the master password that was in use when the backup was made. Older-format backups are upgraded on that unlock as usual.
+- Any failure leaves the current vault untouched. While a restore runs, the Backups window can't be closed, and the app always moves to the unlock screen once a restore succeeds.
+
+**Checks**
+- `npm test`: 222 tests, 220 pass, 0 fail, 2 skipped. Both skipped tests need file symlinks, which this Windows account isn't allowed to create. The new tests cover success, cancel, every bad-pass case, files changing after the preview, auto-lock during the confirmation, failed copies and writes, a restore with no vault file, older-format backups and a damaged vault restored while locked.
+- An independent security review approved the restore. It found one problem in the window code: a restore that succeeded after the window was closed could leave old entries on screen. That is fixed.
+- Not yet checked by hand in the running app.
+
+**Still open**
+- The window code has no automated tests; the review fix was checked by reading the code and by the existing tests.
+- Not yet tested: a file that already exists at the pre-restore name, and auto-lock firing during the write itself rather than during the confirmation. Both are covered by the design and reviewed as safe.
+
+**Next:** 2A.4, backup cleanup: choose backups to delete permanently, with the newest and only good backups always kept.
+
 ## 2A.2: Restore preview (version 1.5.0, 2026-11-12)
 
 **What changed**

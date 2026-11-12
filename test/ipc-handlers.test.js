@@ -859,3 +859,53 @@ test('vault:preview-backup rejects callers that are not the app page, and leaves
   assert.deepEqual(await folderBytes(directory), before);
   assert.equal(h.ipc.restoreTokens.take(token, id).id, id, 'the token from the trusted preview still works');
 });
+
+// --- Phase 2A milestone 2A.3: restore (the full cases are in vault-backup-restore.test.js) ---
+
+test('vault:restore-backup rejects callers that are not the app page, and leaves the token and files alone', async (t) => {
+  const { vault, directory, id } = await previewFixture(t, { unlocked: true });
+  await vault.saveEntry(makeEntry({ site: 'c.example' })); // so the backup differs from the vault
+  const h = harness(t, vault);
+  const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+  const before = await folderBytes(directory);
+  const countBefore = h.ipc.restoreTokens.cancelCount;
+
+  const subframe = { senderFrame: { url: PAGE_URL }, sender: h.contents };
+  const website = { senderFrame: { url: 'https://example.com/' }, sender: { mainFrame: null } };
+  website.sender.mainFrame = website.senderFrame;
+  for (const event of [subframe, website, {}]) {
+    assert.deepEqual(await h.invokeAs(event, 'vault:restore-backup', id, token), { success: false, error: 'Unauthorized caller.' });
+  }
+  assert.equal(h.dialogs.length, 0, 'no confirmation opens for an untrusted caller');
+  assert.equal(h.ipc.restoreTokens.cancelCount, countBefore);
+  assert.deepEqual(await folderBytes(directory), before);
+  assert.equal(vault.isUnlocked(), true);
+
+  const result = await h.invoke('vault:restore-backup', id, token);
+  assert.equal(result.success, true, 'the token from the trusted preview still works');
+  assert.equal(result.restoredFrom, id);
+  assert.equal(h.dialogs.length, 1);
+  assert.equal(vault.isUnlocked(), false);
+});
+
+test('vault:restore-backup checks its arguments and returns errors without paths', async (t) => {
+  const { vault, directory, id } = await previewFixture(t);
+  const h = harness(t, vault);
+  const before = await folderBytes(directory);
+  for (const [args, error] of [
+    [[], 'Invalid backup id.'],
+    [[42, 'token'], 'Invalid backup id.'],
+    [['..\vault.json', 'token'], 'Invalid backup id.'],
+    [[id], TOKEN_ERROR],
+    [[id, 42], TOKEN_ERROR],
+    [[id, ['token']], TOKEN_ERROR]
+  ]) {
+    const { token } = await h.invoke('vault:preview-backup', id, MASTER_PASSWORD);
+    const result = await h.invoke('vault:restore-backup', ...args);
+    assert.deepEqual(result, { success: false, error }, JSON.stringify(args));
+    assert.equal(result.error.includes(directory), false);
+    assertTokenGone(h, token, id);
+  }
+  assert.equal(h.dialogs.length, 0);
+  assert.deepEqual(await folderBytes(directory), before);
+});

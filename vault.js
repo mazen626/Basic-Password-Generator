@@ -36,6 +36,7 @@ const BACKUP_SUFFIX = '-(\\d{13})-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4
 // One message for a wrong password and for tampered or invalid backup contents, so a preview
 // never tells the two apart.
 const BACKUP_OPEN_ERROR = 'Incorrect password, or the backup is damaged.';
+const PRE_RESTORE_ERROR = 'Could not save a copy of the current vault, so nothing was restored.';
 
 class PasswordVault {
   constructor(filePath) {
@@ -194,6 +195,57 @@ class PasswordVault {
     } finally {
       await handle.close();
     }
+  }
+
+  // Transactional restore (docs/PHASE-2A-DESIGN.md, part D, steps 4 to 7). `expected` is what the
+  // preview recorded: the backup's SHA-256 and the vault file's state (SHA-256 or 'absent'). Runs
+  // as one write transaction, so no other write can happen in between. Order:
+  //   1. read vault.json once and require its state to match;
+  //   2. read the backup again, check its envelope and require its digest to match;
+  //   3. refuse a backup identical to the current vault;
+  //   4. save and verify the pre-restore copy (only when vault.json exists);
+  //   5. write the backup bytes through the .tmp + flush + rename path;
+  //   6. lock the vault.
+  // Only the bytes read in steps 1 and 2 are used after the checks. Any failure before the rename
+  // leaves vault.json and the key untouched. Errors never include a path.
+  async restoreBackup(id, expected) {
+    const info = this.validateBackupId(id);
+    if (!expected || typeof expected.backupDigest !== 'string' || typeof expected.vaultState !== 'string') {
+      throw new Error('Preview the backup again before restoring.');
+    }
+
+    return this.runWriteTransaction(async () => {
+      const current = await readVaultForRestore(this.filePath);
+      if ((current ? current.digest : 'absent') !== expected.vaultState) {
+        throw new Error('The vault changed after the preview. Preview the backup again.');
+      }
+
+      const backup = await readBackupFile(path.join(path.dirname(this.filePath), id));
+      try {
+        const envelope = validateEnvelope(JSON.parse(backup.toString('utf8')));
+        if (info.legacyVersion !== null && envelope.version !== info.legacyVersion) throw new Error('version');
+      } catch {
+        throw new Error('Backup file is invalid or corrupted.');
+      }
+      if (sha256Hex(backup) !== expected.backupDigest) {
+        throw new Error('The backup changed after the preview. Preview the backup again.');
+      }
+      if (current && current.bytes && backup.equals(current.bytes)) {
+        throw new Error('This backup is the same as the current vault.');
+      }
+
+      const preRestoreBackup = current ? await writePreRestoreCopy(this.filePath, current) : null;
+
+      try {
+        await writeVaultBytes(this.filePath, backup);
+      } catch {
+        throw new Error('Could not write the restored vault. The current vault was not changed.');
+      }
+
+      // The restored vault may use another master password, so the old key must not stay in use.
+      this.lock();
+      return { preRestoreBackup };
+    });
   }
 
   async unlock(masterPassword, confirmation) {
@@ -749,12 +801,98 @@ async function readVaultFile(filePath) {
   }
 }
 
+function sha256Hex(bytes) {
+  return crypto.createHash('sha256').update(bytes).digest('hex');
+}
+
+// Streams a file's SHA-256 (hex). Errors are passed on as they are.
+async function hashFile(filePath) {
+  const handle = await fs.open(filePath, 'r');
+  try {
+    const hash = crypto.createHash('sha256');
+    const buffer = Buffer.alloc(1024 * 1024);
+    for (;;) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+    return hash.digest('hex');
+  } finally {
+    await handle.close();
+  }
+}
+
+// Reads vault.json once for a restore: null when there is none, otherwise { bytes, digest }. The
+// digest always covers the whole file. A file over MAX_VAULT_BYTES is not kept in memory
+// (`bytes` is null); its pre-restore copy is then made with copyFile and checked by this digest.
+async function readVaultForRestore(filePath) {
+  let handle;
+  try {
+    handle = await fs.open(filePath, 'r');
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw new Error('Could not read the vault file.');
+  }
+  try {
+    const hash = crypto.createHash('sha256');
+    let chunks = [];
+    let total = 0;
+    for (;;) {
+      const buffer = Buffer.alloc(1024 * 1024);
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, null);
+      if (bytesRead === 0) break;
+      const chunk = buffer.subarray(0, bytesRead);
+      hash.update(chunk);
+      total += bytesRead;
+      if (chunks && total <= MAX_VAULT_BYTES) chunks.push(chunk);
+      else chunks = null;
+    }
+    return { bytes: chunks ? Buffer.concat(chunks, total) : null, digest: hash.digest('hex') };
+  } catch {
+    throw new Error('Could not read the vault file.');
+  } finally {
+    await handle.close();
+  }
+}
+
+// Saves the vault as it was read for the restore to `vault-before-restore-<ms>-<uuid>.bak`,
+// flushed, never overwriting a file, then reads the copy back and checks its SHA-256. On any
+// failure the partial copy is removed (if this call created it) and the restore stops.
+async function writePreRestoreCopy(filePath, current) {
+  const name = `${BACKUP_PREFIXES['pre-restore']}-${Date.now()}-${crypto.randomUUID()}.bak`;
+  const copyPath = path.join(path.dirname(filePath), name);
+  try {
+    if (current.bytes) {
+      await writeAndFlush(copyPath, current.bytes, 'wx');
+    } else {
+      await fs.copyFile(filePath, copyPath, fs.constants.COPYFILE_EXCL);
+      const handle = await fs.open(copyPath, 'r+');
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+    }
+    if (await hashFile(copyPath) !== current.digest) throw new Error('digest mismatch');
+  } catch (error) {
+    // EEXIST means another file already had this name: it is not ours to remove.
+    if (error.code !== 'EEXIST') await fs.rm(copyPath, { force: true }).catch(() => {});
+    throw new Error(PRE_RESTORE_ERROR);
+  }
+  return name;
+}
+
 async function writeVaultFile(filePath, envelope) {
+  return writeVaultBytes(filePath, JSON.stringify(envelope, null, 2));
+}
+
+// Replaces the vault file with `contents` (a string or bytes): written to vault.json.tmp, flushed,
+// then renamed over vault.json. On failure the .tmp is removed and vault.json is unchanged.
+async function writeVaultBytes(filePath, contents) {
   const temporaryPath = `${filePath}.tmp`;
   await fs.mkdir(path.dirname(filePath), { recursive: true });
 
   try {
-    const contents = JSON.stringify(envelope, null, 2);
     if (Buffer.byteLength(contents, 'utf8') > MAX_VAULT_BYTES) {
       throw new Error('Vault has reached its maximum file size.');
     }

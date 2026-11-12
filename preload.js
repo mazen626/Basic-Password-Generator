@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openVaultFolder: () => ipcRenderer.invoke('vault:open-folder'),
   listBackups: () => ipcRenderer.invoke('vault:list-backups'),
   previewBackup: (id, password) => ipcRenderer.invoke('vault:preview-backup', id, password),
+  restoreBackup: (id, token) => ipcRenderer.invoke('vault:restore-backup', id, token),
   unlockVault: (masterPassword, confirmation) => ipcRenderer.invoke('vault:unlock', masterPassword, confirmation),
   lockVault: () => ipcRenderer.invoke('vault:lock'),
   recordActivity: () => ipcRenderer.invoke('vault:activity'),

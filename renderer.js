@@ -599,7 +599,9 @@ async function initializeUnlockForm() {
 
   confirmationField.hidden = result.exists;
   confirmationInput.required = !result.exists;
-  recoveryActions.classList.toggle("hidden", !result.exists);
+  document.getElementById("backupVaultBtn").classList.toggle("hidden", !result.exists);
+  document.getElementById("openVaultFolderBtn").classList.toggle("hidden", !result.exists);
+  recoveryNotice.classList.toggle("hidden", !result.exists);
   recoveryNotice.textContent = result.corrupted
     ? "The vault file appears damaged or unsupported. It has not been changed. Create an encrypted backup before trying recovery."
     : result.legacy
@@ -614,7 +616,8 @@ async function initializeUnlockForm() {
 
 function clearUnlockedView(message) {
   closeChangePasswordDialog();
-  closeBackupsDialog();
+  // A Backups dialog opened from the locked screen must survive a stray lock event.
+  if (!vaultPanel.classList.contains("hidden")) closeBackupsDialog();
   entriesList.replaceChildren();
   savedEntries = [];
   searchInput.value = "";
@@ -663,6 +666,7 @@ async function unlockVault() {
     return;
   }
 
+  closeBackupsDialog();
   unlockPanel.classList.add("hidden");
   vaultPanel.classList.remove("hidden");
   unlockStatus.textContent = "";
@@ -972,8 +976,8 @@ function renderBackupItem(item) {
   if (item.status !== "valid") state.classList.add("bad");
   add("backups-meta", BACKUP_HINTS[item.passwordHint] || BACKUP_HINTS.unknown);
   if (item.status === "valid") {
-    const previewButton = makeButton("Preview…", () => openBackupPreview(item, previewButton));
-    previewButton.setAttribute("aria-label", `Preview backup from ${formatBackupDate(item.createdAt)}`);
+    const previewButton = makeButton("Restore…", () => openBackupPreview(item, previewButton));
+    previewButton.setAttribute("aria-label", `Restore backup from ${formatBackupDate(item.createdAt)}`);
     li.append(previewButton);
   }
   add("backups-id", String(item.id), String(item.id));
@@ -1013,6 +1017,8 @@ const backupsPreviewSummary = document.getElementById("backupsPreviewSummary");
 const backupsPreviewCounts = document.getElementById("backupsPreviewCounts");
 const backupsPreviewUpgrade = document.getElementById("backupsPreviewUpgrade");
 const backupsPreviewRun = document.getElementById("backupsPreviewRun");
+const backupsRestoreRun = document.getElementById("backupsRestoreRun");
+let previewToken = null; // single-use restore token; never displayed or logged
 let previewBackupId = null;
 let previewReturnButton = null;
 
@@ -1033,6 +1039,8 @@ function describeBackupSummary(summary) {
 function resetBackupPreview() {
   previewBackupId = null;
   previewReturnButton = null;
+  previewToken = null;
+  backupsRestoreRun.classList.add("hidden");
   backupsPreviewPassword.value = "";
   backupsPreviewStatus.textContent = "";
   backupsPreviewCounts.textContent = "";
@@ -1064,6 +1072,8 @@ function backBackupPreview() {
 async function runBackupPreview() {
   const id = previewBackupId;
   if (id === null) return;
+  previewToken = null;
+  backupsRestoreRun.classList.add("hidden");
   backupsPreviewStatus.textContent = "";
   backupsPreviewSummary.hidden = true;
   const password = backupsPreviewPassword.value;
@@ -1093,8 +1103,63 @@ async function runBackupPreview() {
       ? `Format version ${summary.version}: it will be upgraded the first time it is unlocked.`
       : "";
     backupsPreviewSummary.hidden = false;
+    previewToken = result.token || null;
+    backupsRestoreRun.classList.toggle("hidden", !previewToken);
   });
 }
+
+let restoreInFlight = false;
+
+async function runBackupRestore() {
+  const id = previewBackupId;
+  const token = previewToken;
+  if (id === null || !token) return;
+  const backButton = document.getElementById("backupsPreviewBack");
+  const closeButton = document.getElementById("backupsClose");
+  restoreInFlight = true;
+  backButton.disabled = true;
+  closeButton.disabled = true;
+  await withDisabled(backupsRestoreRun, async () => {
+    let result;
+    try {
+      result = await window.electronAPI.restoreBackup(id, token);
+    } catch {
+      result = { success: false, error: "Could not restore this backup." };
+    } finally {
+      restoreInFlight = false;
+      backButton.disabled = false;
+      closeButton.disabled = false;
+    }
+    previewToken = null; // used up after any attempt
+    // A successful restore has locked the vault in the main process, so the window must move to
+    // the locked state even if the dialog was closed or the view changed in the meantime.
+    if (result && result.success) {
+      let message = "Backup restored. Unlock with the master password that was in use when it was made.";
+      if (result.preRestoreBackup) message += " Your previous vault was saved as a pre-restore backup.";
+      if (!vaultPanel.classList.contains("hidden")) {
+        clearUnlockedView(message);
+      } else {
+        closeBackupsDialog();
+        unlockStatus.textContent = message;
+        initializeUnlockForm();
+        masterPasswordInput.focus();
+      }
+      return;
+    }
+    if (!backupsDialog.open || previewBackupId !== id) return;
+    backupsRestoreRun.classList.add("hidden");
+    if (result && result.cancelled) {
+      backupsPreviewStatus.textContent = "Restore cancelled. Preview the backup again to restore it.";
+    } else {
+      backupsPreviewStatus.textContent = (result && result.error) || "Could not restore this backup.";
+    }
+  });
+}
+backupsRestoreRun.addEventListener("click", runBackupRestore);
+// Escape can't close the dialog while a restore is running.
+backupsDialog.addEventListener("cancel", (event) => {
+  if (restoreInFlight) event.preventDefault();
+});
 
 backupsPreviewRun.addEventListener("click", runBackupPreview);
 document.getElementById("backupsPreviewBack").addEventListener("click", backBackupPreview);
@@ -1119,6 +1184,14 @@ document.getElementById("backupsClose").addEventListener("click", closeBackupsDi
 backupsMenuItem.addEventListener("click", () => {
   closeMenus();
   if (vaultPanel.classList.contains("hidden")) return;
+  resetBackupPreview();
+  backupsDialog.showModal();
+  backupsCreate.focus();
+  loadBackups();
+});
+
+document.getElementById("restoreBackupBtn").addEventListener("click", () => {
+  if (!vaultPanel.classList.contains("hidden")) return;
   resetBackupPreview();
   backupsDialog.showModal();
   backupsCreate.focus();

@@ -115,10 +115,20 @@ Backups are byte-for-byte copies of `vault.json`, written next to it with `wx` a
 **Restore preview (2A.2).** "Preview…" on a valid backup asks for that backup's master password and calls `vault:preview-backup`, which works locked or unlocked:
 - The backup is read with the same file rules as the list, decrypted in memory with a key derived from its own salt and iterations, and fully validated. Version 1 and 2 backups are also upgraded in memory as a dry run. Nothing is written, and the vault's own key and lock state are never used or changed.
 - The derived key is zeroed afterwards. The window receives only the entry count, the newest and oldest entry dates, the format version and whether it will be upgraded: no entry data and no key settings. A wrong password and damaged contents give the same error.
-- A successful preview issues a one-time restore token, valid for 2 minutes and held in the main process with the backup's SHA-256, the current vault file's SHA-256 and the summary. Lock, auto-lock, unlock, a password change, a CSV import, closing the app and any new preview cancel it. The restore that uses it comes in 2A.3.
+- A successful preview issues a one-time restore token, valid for 2 minutes and held in the main process with the backup's SHA-256, the current vault file's SHA-256 and the summary. Lock, auto-lock, unlock, a password change, a CSV import, closing the app and any new preview cancel it.
 - Decrypted entries are JavaScript strings during the preview and can't be zeroed, as with unlock.
 
-Restore (2A.3) and cleanup (2A.4) are designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
+**Restore (2A.3).** `vault:restore-backup(id, token)` works locked or unlocked, and from the unlock screen through "Restore from backup…":
+1. The token is used up first, whatever happens next.
+2. A native confirmation from the main process, with Cancel as the default, names the backup's date, kind and previewed entry count. It is built only from what the main process stored at preview, so the window can't make it describe another backup.
+3. If the vault was locked, unlocked, or any cancel event happened while the confirmation was open (including auto-lock), the restore stops.
+4. Inside the vault's write transaction, so no other save can run in between: `vault.json` is read once and must match the state recorded at preview; the backup is read again and must match the previewed SHA-256; a backup identical to the current vault is refused.
+5. The current vault is saved as `vault-before-restore-<ms>-<uuid>.bak` (never overwriting a file), flushed, and read back to check its SHA-256. If that fails, nothing is restored.
+6. The backup's exact bytes replace `vault.json` through the same `.tmp` + flush + rename path as every save, then the vault locks. It opens with the master password that was in use when the backup was made; version 1 and 2 backups are upgraded on that unlock as usual.
+
+Any failure before the rename leaves `vault.json` and the lock state unchanged. Same limit as every save: Windows can't flush the folder, so a power cut right after the rename can lose the rename, leaving the previous vault in place.
+
+Cleanup (2A.4) is designed in [PHASE-2A-DESIGN.md](PHASE-2A-DESIGN.md) and not yet implemented.
 
 ## Known gaps (planned for Phase 1)
 
@@ -126,7 +136,7 @@ Restore (2A.3) and cleanup (2A.4) are designed in [PHASE-2A-DESIGN.md](PHASE-2A-
 2. **Copy takes plaintext (fixed in Phase 1 milestone 1.2).** Copying a saved entry sends only its ID with a token tied to that entry. The generator's Copy button still sends text, because the window created that password.
 3. **Master password in IPC.** The master password crosses IPC as a JavaScript string, which can't be zeroed. Only the derived key buffer is zeroed.
 4. **Write durability (fixed in Phase 1 milestone 1.3).** Each save writes `vault.json.tmp`, flushes it to disk (`FileHandle.sync()`, which is `FlushFileBuffers` on Windows), and only then renames it over `vault.json`. A power cut can no longer leave a renamed but unwritten vault. Backup files are flushed to disk the same way. Remaining limit: Windows cannot flush a folder, so a power cut right after the rename can lose the rename, leaving the previous vault in place.
-5. **Backups are never pruned** and stay readable with the master password that was in use when they were created. They can now be listed (2A.1); restore and manual cleanup come in milestones 2A.3 and 2A.4.
+5. **Backups are never pruned** and stay readable with the master password that was in use when they were created. They can now be listed and restored (2A.1 to 2A.3); manual cleanup comes in milestone 2A.4.
 6. **File permissions.** `mode: 0o600` has no effect on Windows; the vault inherits the default ACL of `%APPDATA%`.
 7. **Permissions (fixed in Phase 1 milestone 1.1).** `denyAllPermissions` in `ipc-handlers.js` now denies every Electron permission request and check, such as camera, microphone and notifications. The app needs none of them.
 8. **Master-password change (fixed in Phase 1 milestone 1.4).** File > Change master password checks the current password, saves a byte-for-byte backup, then re-encrypts the vault with a fresh salt and 600,000 iterations, which also upgrades vaults created with fewer. A failure before the rename leaves the old vault and key in use. Backups made before the change still open only with the old password.
